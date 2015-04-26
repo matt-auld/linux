@@ -387,8 +387,8 @@ i915_gem_create(struct drm_file *file,
 
 	/* Allocate the new object */
 	obj = i915_gem_alloc_object(dev, size);
-	if (obj == NULL)
-		return -ENOMEM;
+	if (IS_ERR(obj))
+		return PTR_ERR(obj);
 
 	ret = drm_gem_handle_create(file, &obj->base, &handle);
 	/* drop reference from allocate - handle holds it now */
@@ -4527,14 +4527,16 @@ struct drm_i915_gem_object *i915_gem_alloc_object(struct drm_device *dev,
 	struct drm_i915_gem_object *obj;
 	struct address_space *mapping;
 	gfp_t mask;
+	int ret;
 
 	obj = i915_gem_object_alloc(dev);
 	if (obj == NULL)
-		return NULL;
+		return ERR_PTR(-ENOMEM);
 
-	if (drm_gem_object_init(dev, &obj->base, size) != 0) {
+	ret = drm_gem_object_init(dev, &obj->base, size);
+	if (ret) {
 		i915_gem_object_free(obj);
-		return NULL;
+		return ERR_PTR(ret);
 	}
 
 	mask = GFP_HIGHUSER | __GFP_RECLAIMABLE;
@@ -5390,7 +5392,7 @@ i915_gem_object_create_from_data(struct drm_device *dev,
 	int ret;
 
 	obj = i915_gem_alloc_object(dev, round_up(size, PAGE_SIZE));
-	if (IS_ERR_OR_NULL(obj))
+	if (IS_ERR(obj))
 		return obj;
 
 	ret = i915_gem_object_set_to_cpu_domain(obj, true);
