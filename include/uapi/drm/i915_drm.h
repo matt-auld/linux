@@ -701,10 +701,14 @@ struct drm_i915_gem_exec_object2 {
 #define EXEC_OBJECT_WRITE	(1<<2)
 #define EXEC_OBJECT_SUPPORTS_48B_ADDRESS (1<<3)
 #define EXEC_OBJECT_PINNED	(1<<4)
-#define __EXEC_OBJECT_UNKNOWN_FLAGS -(EXEC_OBJECT_PINNED<<1)
+#define EXEC_OBJECT_PAD_TO_SIZE	(1<<5)
+#define __EXEC_OBJECT_UNKNOWN_FLAGS -(EXEC_OBJECT_PAD_TO_SIZE<<1)
 	__u64 flags;
 
-	__u64 rsvd1;
+	union {
+		__u64 rsvd1;
+		__u64 pad_to_size;
+	};
 	__u64 rsvd2;
 };
 

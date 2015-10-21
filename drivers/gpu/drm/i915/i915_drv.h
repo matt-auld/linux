@@ -3064,11 +3064,13 @@ void i915_gem_vma_destroy(struct i915_vma *vma);
 int __must_check
 i915_gem_object_pin(struct drm_i915_gem_object *obj,
 		    struct i915_address_space *vm,
+		    uint64_t size,
 		    uint32_t alignment,
 		    uint64_t flags);
 int __must_check
 i915_gem_object_ggtt_pin(struct drm_i915_gem_object *obj,
 			 const struct i915_ggtt_view *view,
+			 uint64_t size,
 			 uint32_t alignment,
 			 uint64_t flags);
 
@@ -3383,8 +3385,8 @@ i915_gem_obj_ggtt_pin(struct drm_i915_gem_object *obj,
 	struct drm_i915_private *dev_priv = to_i915(obj->base.dev);
 	struct i915_ggtt *ggtt = &dev_priv->ggtt;
 
-	return i915_gem_object_pin(obj, &ggtt->base,
-				   alignment, flags | PIN_GLOBAL);
+	return i915_gem_object_pin(obj, &ggtt->base, 0, alignment,
+				   flags | PIN_GLOBAL);
 }
 
 void i915_gem_object_ggtt_unpin_view(struct drm_i915_gem_object *obj,
