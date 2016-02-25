@@ -3493,6 +3493,13 @@ intel_partial_pages(const struct i915_ggtt_view *view,
 	struct sg_page_iter obj_sg_iter;
 	int ret = -ENOMEM;
 
+	if (U64_MAX - view->params.partial.offset < view->params.partial.size)
+		return ERR_PTR(-ERANGE);
+
+	if (view->params.partial.offset + view->params.partial.size >
+	    obj->base.size >> PAGE_SHIFT)
+		return ERR_PTR(-EINVAL);
+
 	st = kmalloc(sizeof(*st), GFP_KERNEL);
 	if (!st)
 		goto err_st_alloc;
