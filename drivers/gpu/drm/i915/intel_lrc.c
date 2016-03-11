@@ -214,7 +214,7 @@ enum {
 	LEGACY_64B_CONTEXT
 };
 #define GEN8_CTX_ADDRESSING_MODE_SHIFT 3
-#define GEN8_CTX_ADDRESSING_MODE(dev)  (USES_FULL_48BIT_PPGTT(dev) ?\
+#define GEN8_CTX_ADDRESSING_MODE(ppgtt) (IS_48BIT_PPGTT(ppgtt) ? \
 		LEGACY_64B_CONTEXT :\
 		LEGACY_32B_CONTEXT)
 enum {
@@ -276,8 +276,6 @@ logical_ring_init_platform_invariants(struct intel_engine_cs *engine)
 					(engine->id == VCS || engine->id == VCS2);
 
 	engine->ctx_desc_template = GEN8_CTX_VALID;
-	engine->ctx_desc_template |= GEN8_CTX_ADDRESSING_MODE(dev) <<
-				   GEN8_CTX_ADDRESSING_MODE_SHIFT;
 	if (IS_GEN8(dev))
 		engine->ctx_desc_template |= GEN8_CTX_L3LLC_COHERENT;
 	engine->ctx_desc_template |= GEN8_CTX_PRIVILEGE;
@@ -319,7 +317,9 @@ intel_lr_context_descriptor_update(struct intel_context *ctx,
 	lrca = ctx->engine[engine->id].lrc_vma->node.start +
 	       LRC_PPHWSP_PN * PAGE_SIZE;
 
-	desc = engine->ctx_desc_template;			   /* bits  0-11 */
+	desc = engine->ctx_desc_template;		   /* bits  0-11 */
+	desc |= GEN8_CTX_ADDRESSING_MODE(ctx->ppgtt) <<	   /* bits  3-4 */
+			GEN8_CTX_ADDRESSING_MODE_SHIFT;
 	desc |= lrca;					   /* bits 12-31 */
 	desc |= (lrca >> PAGE_SHIFT) << GEN8_CTX_ID_SHIFT; /* bits 32-51 */
 
