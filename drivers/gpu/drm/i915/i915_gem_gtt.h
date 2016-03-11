@@ -110,6 +110,7 @@ typedef uint64_t gen8_ppgtt_pml4e_t;
 
 #define I915_PDPES_PER_PDP(dev) (USES_FULL_48BIT_PPGTT(dev) ?\
 				 GEN8_PML4ES_PER_PML4 : GEN8_LEGACY_PDPES)
+#define IS_48BIT_PPGTT(ppgtt)	((ppgtt) && ((ppgtt)->address_space_mode == 48))
 
 #define PPAT_UNCACHED_INDEX		(_PAGE_PWT | _PAGE_PCD)
 #define PPAT_CACHED_PDE_INDEX		0 /* WB LLC */
@@ -371,6 +372,8 @@ struct i915_hw_ppgtt {
 		struct i915_page_directory_pointer pdp;	/* GEN8+ */
 		struct i915_page_directory pd;		/* GEN6-7 */
 	};
+
+	int address_space_mode;
 
 	struct drm_i915_file_private *file_priv;
 
