@@ -1798,6 +1798,7 @@ int i915_gem_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 	unsigned long pfn;
 	int ret = 0;
 	bool write = !!(vmf->flags & FAULT_FLAG_WRITE);
+	unsigned long base, size;
 
 	intel_runtime_pm_get(dev_priv);
 
@@ -1859,17 +1860,25 @@ int i915_gem_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 		i915_gem_obj_ggtt_offset_view(obj, &view);
 	pfn >>= PAGE_SHIFT;
 
+	base = vma->vm_start;
+
 	if (unlikely(view.type == I915_GGTT_VIEW_PARTIAL)) {
+		base += view.params.partial.offset << PAGE_SHIFT;
+		size = view.params.partial.size;
+	} else {
+		size = min_t(unsigned long, vma->vm_end - vma->vm_start,
+			     obj->base.size) >> PAGE_SHIFT;
+	}
+
+	if (!obj->fault_mappable || view.type == I915_GGTT_VIEW_PARTIAL) {
+		unsigned long i;
+
 		/* Overriding existing pages in partial view does not cause
 		 * us any trouble as TLBs are still valid because the fault
 		 * is due to userspace losing part of the mapping or never
 		 * having accessed it before (at this partials' range).
 		 */
-		unsigned long base = vma->vm_start +
-				     (view.params.partial.offset << PAGE_SHIFT);
-		unsigned int i;
-
-		for (i = 0; i < view.params.partial.size; i++) {
+		for (i = 0; i < size; i++) {
 			ret = vm_insert_pfn(vma, base + i * PAGE_SIZE, pfn + i);
 			if (ret)
 				break;
@@ -1877,25 +1886,8 @@ int i915_gem_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 
 		obj->fault_mappable = true;
 	} else {
-		if (!obj->fault_mappable) {
-			unsigned long size = min_t(unsigned long,
-						   vma->vm_end - vma->vm_start,
-						   obj->base.size);
-			int i;
-
-			for (i = 0; i < size >> PAGE_SHIFT; i++) {
-				ret = vm_insert_pfn(vma,
-						    (unsigned long)vma->vm_start + i * PAGE_SIZE,
-						    pfn + i);
-				if (ret)
-					break;
-			}
-
-			obj->fault_mappable = true;
-		} else
-			ret = vm_insert_pfn(vma,
-					    (unsigned long)vmf->virtual_address,
-					    pfn + page_offset);
+		ret = vm_insert_pfn(vma, (unsigned long)vmf->virtual_address,
+				    pfn + page_offset);
 	}
 unpin:
 	i915_gem_object_ggtt_unpin_view(obj, &view);
