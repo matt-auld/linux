@@ -1220,15 +1220,6 @@ static int gen8_alloc_va_range_3lvl(struct i915_address_space *vm,
 	uint32_t pdpes = I915_PDPES_PER_PDP(dev);
 	int ret;
 
-	/* Wrap is never okay since we can only represent 48b, and we don't
-	 * actually use the other side of the canonical address space.
-	 */
-	if (WARN_ON(start + length < start))
-		return -ENODEV;
-
-	if (WARN_ON(start + length > vm->total))
-		return -ENODEV;
-
 	ret = alloc_gen8_temp_bitmaps(&new_page_dirs, &new_page_tables, pdpes);
 	if (ret)
 		return ret;
@@ -1369,6 +1360,8 @@ static int gen8_alloc_va_range(struct i915_address_space *vm,
 			       uint64_t start, uint64_t length)
 {
 	struct i915_hw_ppgtt *ppgtt = i915_vm_to_ppgtt(vm);
+
+	length = min_t(uint64_t, length, vm->total);
 
 	if (USES_FULL_48BIT_PPGTT(vm->dev))
 		return gen8_alloc_va_range_4lvl(vm, &ppgtt->pml4, start, length);
@@ -1860,11 +1853,9 @@ static int gen6_alloc_va_range(struct i915_address_space *vm,
 	uint32_t pde, temp;
 	int ret;
 
-	if (WARN_ON(start_in + length_in > ppgtt->base.total))
-		return -ENODEV;
-
 	start = start_save = start_in;
-	length = length_save = length_in;
+	length = length_save = length_in = min_t(uint64_t, length_in,
+						 ppgtt->base.total);
 
 	bitmap_zero(new_page_tables, I915_PDES);
 
