@@ -52,6 +52,7 @@
 #include <linux/poll.h>
 #include <linux/ratelimit.h>
 #include <linux/sched.h>
+#include <linux/seqlock.h>
 #include <linux/slab.h>
 #include <linux/types.h>
 #include <linux/vmalloc.h>
@@ -725,10 +726,10 @@ struct drm_vblank_crtc {
 	wait_queue_head_t queue;	/**< VBLANK wait queue */
 	struct timer_list disable_timer;		/* delayed disable timer */
 
-	/* vblank counter, protected by dev->vblank_time_lock for writes */
-	u32 count;
-	/* vblank timestamps, protected by dev->vblank_time_lock for writes */
-	struct timeval time[DRM_VBLANKTIME_RBSIZE];
+	seqlock_t seqlock;		/* protects vblank count and time */
+
+	u32 count;			/* vblank counter */
+	struct timeval time;		/* vblank timestamp */
 
 	atomic_t refcount;		/* number of users of vblank interruptsper crtc */
 	u32 last;			/* protected by dev->vbl_lock, used */
