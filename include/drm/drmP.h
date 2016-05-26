@@ -721,7 +721,15 @@ struct drm_vblank_crtc {
 	wait_queue_head_t queue;	/**< VBLANK wait queue */
 	struct timer_list disable_timer;		/* delayed disable timer */
 
-	seqlock_t seqlock;		/* protects vblank count and time */
+	/*
+	 * protects vblank count and time.
+	 *
+	 * please note that the vblank_time_lock is still needed in addition to
+	 * the seqlock to protect the vblank count and time, especially to get
+	 * the _irqsave part of spin_lock_irqsave, as the write seqlocks don't
+	 * do the local irq disable.
+	 */
+	seqlock_t seqlock;
 
 	u32 count;			/* vblank counter */
 	struct timeval time;		/* vblank timestamp */
