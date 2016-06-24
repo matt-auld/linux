@@ -409,7 +409,7 @@ struct i915_hw_ppgtt {
 
 #define gen6_for_all_pdes(pt, ppgtt, iter)  \
 	for (iter = 0;		\
-	     pt = ppgtt->pd.page_table[iter], iter < I915_PDES;	\
+	     iter < I915_PDES ? (pt = ppgtt->pd.page_table[iter]), 1 : 0; \
 	     iter++)
 
 static inline uint32_t i915_pte_index(uint64_t address, uint32_t pde_shift)
