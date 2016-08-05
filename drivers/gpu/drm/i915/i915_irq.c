@@ -2487,11 +2487,13 @@ static void i915_error_wake_up(struct drm_i915_private *dev_priv)
 /**
  * i915_reset_and_wakeup - do process context error handling work
  * @dev_priv: i915 device private
+ * @engine_mask: engines which are marked as hung
  *
  * Fire an error uevent so userspace can see that a hang or error
  * was detected.
  */
-static void i915_reset_and_wakeup(struct drm_i915_private *dev_priv)
+static void i915_reset_and_wakeup(struct drm_i915_private *dev_priv,
+				  u32 engine_mask)
 {
 	struct kobject *kobj = &dev_priv->drm.primary->kdev->kobj;
 	char *error_event[] = { I915_ERROR_UEVENT "=1", NULL };
@@ -2501,6 +2503,15 @@ static void i915_reset_and_wakeup(struct drm_i915_private *dev_priv)
 	kobject_uevent_env(kobj, KOBJ_CHANGE, error_event);
 
 	DRM_DEBUG_DRIVER("resetting chip\n");
+	/*
+	 * This event needs to be sent before performing gpu reset. When
+	 * engine resets are supported we iterate through all engines and
+	 * reset hung engines individually. To keep the event dispatch
+	 * mechanism consistent with full gpu reset, this is only sent once
+	 * even when multiple engines are hung. It is also safe to move this
+	 * here because when we are in this function, we will definitely
+	 * perform gpu reset.
+	 */
 	kobject_uevent_env(kobj, KOBJ_CHANGE, reset_event);
 
 	/*
@@ -2511,6 +2522,28 @@ static void i915_reset_and_wakeup(struct drm_i915_private *dev_priv)
 	 * simulated reset via debugs, so get an RPM reference.
 	 */
 	intel_runtime_pm_get(dev_priv);
+
+	/*
+	 * First attempt to reset the engines which are marked as hung. If that
+	 * fails then we fallback to doing a full gpu reset.
+	 */
+	if (intel_has_engine_reset(dev_priv)) {
+		struct intel_engine_cs *engine;
+		unsigned int tmp;
+		int ret = 0;
+
+		for_each_engine_masked(engine, dev_priv, engine_mask, tmp) {
+			ret = i915_reset_engine(engine);
+			if (ret)
+				break;
+		}
+
+		if (!ret) {
+			DRM_DEBUG_DRIVER("reset hung engines.\n");
+			goto reset_done;
+		}
+	}
+
 	intel_prepare_reset(dev_priv);
 
 	do {
@@ -2532,6 +2565,8 @@ static void i915_reset_and_wakeup(struct drm_i915_private *dev_priv)
 				     HZ));
 
 	intel_finish_reset(dev_priv);
+
+reset_done:
 	intel_runtime_pm_put(dev_priv);
 
 	if (!test_bit(I915_WEDGED, &dev_priv->gpu_error.flags))
@@ -2640,6 +2675,8 @@ static void i915_report_and_clear_eir(struct drm_i915_private *dev_priv)
  * i915_handle_error - handle a gpu error
  * @dev_priv: i915 device private
  * @engine_mask: mask representing engines that are hung
+ * @fmt: formatted hang msg that gets logged in captured error state
+ *
  * Do some basic checking of register state at error time and
  * dump it to the syslog.  Also call i915_capture_error_state() to make
  * sure we get a record and make it available in debugfs.  Fire a uevent
@@ -2664,9 +2701,12 @@ void i915_handle_error(struct drm_i915_private *dev_priv,
 	if (!engine_mask)
 		return;
 
-	if (test_and_set_bit(I915_RESET_IN_PROGRESS,
-			     &dev_priv->gpu_error.flags))
-		return;
+	/*
+	 * Engine reset support is only available from Gen8 onwards so if
+	 * it is not available or explicity disabled, use full gpu reset.
+	 */
+	if (!intel_has_engine_reset(dev_priv))
+		set_bit(I915_RESET_IN_PROGRESS, &dev_priv->gpu_error.flags);
 
 	/*
 	 * Wakeup waiting processes so that the reset function
@@ -2682,7 +2722,7 @@ void i915_handle_error(struct drm_i915_private *dev_priv,
 	 */
 	i915_error_wake_up(dev_priv);
 
-	i915_reset_and_wakeup(dev_priv);
+	i915_reset_and_wakeup(dev_priv, engine_mask);
 }
 
 /* Called from drm generic code, passed 'crtc' which

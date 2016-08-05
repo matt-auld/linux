@@ -1804,6 +1804,32 @@ error:
 	goto wakeup;
 }
 
+/**
+ * i915_reset_engine - reset GPU engine to recover from a hang
+ * @engine: engine to reset
+ *
+ * Reset a specific GPU engine. Useful if a hang is detected.
+ * Returns zero on successful reset or otherwise an error code.
+ *
+ * Procedure is fairly simple:
+ *  - force engine to idle
+ *  - save current state which includes head and current request
+ *  - reset engine
+ *  - restore saved state and resubmit context
+ */
+int i915_reset_engine(struct intel_engine_cs *engine)
+{
+	int ret;
+	struct drm_i915_private *dev_priv = engine->i915;
+
+	/* FIXME: replace me with engine reset sequence */
+	ret = -ENODEV;
+
+	set_bit(I915_RESET_IN_PROGRESS, &dev_priv->gpu_error.flags);
+
+	return ret;
+}
+
 static int i915_pm_suspend(struct device *kdev)
 {
 	struct pci_dev *pdev = to_pci_dev(kdev);

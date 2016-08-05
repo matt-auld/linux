@@ -1769,6 +1769,11 @@ bool intel_has_gpu_reset(struct drm_i915_private *dev_priv)
 	return intel_get_gpu_reset(dev_priv) != NULL;
 }
 
+bool intel_has_engine_reset(struct drm_i915_private *dev_priv)
+{
+	return (INTEL_GEN(dev_priv) >= 8 && i915.reset == 2);
+}
+
 int intel_guc_reset(struct drm_i915_private *dev_priv)
 {
 	int ret;
