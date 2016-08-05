@@ -1857,6 +1857,7 @@ int i915_reset_engine(struct intel_engine_cs *engine)
 	intel_engine_reset_cancel(engine);
 	intel_execlists_restart_submission(engine);
 
+	dev_priv->gpu_error.engine_reset_count[engine->id]++;
 	intel_uncore_forcewake_put(dev_priv, FORCEWAKE_ALL);
 	return 0;
 

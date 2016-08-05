@@ -296,6 +296,7 @@ static void error_print_engine(struct drm_i915_error_state_buf *m,
 	err_printf(m, "  hangcheck: %s [%d]\n",
 		   hangcheck_action_to_str(ee->hangcheck_action),
 		   ee->hangcheck_score);
+	err_printf(m, "  engine reset count: %u\n", ee->reset_count);
 }
 
 void i915_error_printf(struct drm_i915_error_state_buf *e, const char *f, ...)
@@ -1056,6 +1057,8 @@ static void error_record_engine_registers(struct drm_i915_error_state *error,
 
 	ee->hangcheck_score = engine->hangcheck.score;
 	ee->hangcheck_action = engine->hangcheck.action;
+	ee->reset_count = i915_engine_reset_count(&dev_priv->gpu_error,
+						  engine);
 
 	if (USES_PPGTT(dev_priv)) {
 		int i;
