@@ -1812,21 +1812,68 @@ error:
  * Returns zero on successful reset or otherwise an error code.
  *
  * Procedure is fairly simple:
- *  - force engine to idle
- *  - save current state which includes head and current request
- *  - reset engine
- *  - restore saved state and resubmit context
+ *    - identifies the request that caused the hang and it is dropped
+ *    - force engine to idle: this is done by issuing a reset request
+ *    - reset engine
+ *    - restart submissions to the engine
  */
 int i915_reset_engine(struct intel_engine_cs *engine)
 {
 	int ret;
 	struct drm_i915_private *dev_priv = engine->i915;
 
-	/* FIXME: replace me with engine reset sequence */
-	ret = -ENODEV;
+	/*
+	 * We need to first idle the engine by issuing a reset request,
+	 * then perform soft reset and re-initialize hw state, for all of
+	 * this GT power need to be awake so ensure it does throughout the
+	 * process
+	 */
+	intel_uncore_forcewake_get(dev_priv, FORCEWAKE_ALL);
 
+	/*
+	 * the request that caused the hang is stuck on elsp, identify the
+	 * active request and drop it, adjust head to skip the offending
+	 * request to resume executing remaining requests in the queue.
+	 */
+	i915_gem_reset_engine(engine);
+
+	ret = intel_engine_reset_begin(engine);
+	if (ret) {
+		DRM_ERROR("Failed to disable %s\n", engine->name);
+		goto error;
+	}
+
+	ret = intel_gpu_reset(dev_priv, intel_engine_flag(engine));
+	if (ret) {
+		DRM_ERROR("Failed to reset %s, ret=%d\n", engine->name, ret);
+		intel_engine_reset_cancel(engine);
+		goto error;
+	}
+
+	ret = engine->init_hw(engine);
+	if (ret)
+		goto error;
+
+	intel_engine_reset_cancel(engine);
+	intel_execlists_restart_submission(engine);
+
+	intel_uncore_forcewake_put(dev_priv, FORCEWAKE_ALL);
+	return 0;
+
+error:
+	/* use full gpu reset to recover on error */
 	set_bit(I915_RESET_IN_PROGRESS, &dev_priv->gpu_error.flags);
 
+	/* Engine reset is performed without taking struct_mutex, since it
+	 * failed we now fallback to full gpu reset. Wakeup any waiters
+	 * which should now see the reset_in_progress and release
+	 * struct_mutex for us to continue recovery.
+	 */
+	rcu_read_lock();
+	intel_engine_wakeup(engine);
+	rcu_read_unlock();
+
+	intel_uncore_forcewake_put(dev_priv, FORCEWAKE_ALL);
 	return ret;
 }
 

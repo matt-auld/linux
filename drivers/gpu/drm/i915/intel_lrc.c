@@ -601,6 +601,16 @@ static void execlists_submit_request(struct drm_i915_gem_request *request)
 	spin_unlock_irqrestore(&engine->execlist_lock, flags);
 }
 
+void intel_execlists_restart_submission(struct intel_engine_cs *engine)
+{
+	spin_lock_bh(&engine->execlist_lock);
+
+	if (execlists_elsp_idle(engine))
+		tasklet_hi_schedule(&engine->irq_tasklet);
+
+	spin_unlock_bh(&engine->execlist_lock);
+}
+
 int intel_logical_ring_alloc_request_extras(struct drm_i915_gem_request *request)
 {
 	struct intel_engine_cs *engine = request->engine;

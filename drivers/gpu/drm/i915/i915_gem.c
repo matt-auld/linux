@@ -2575,7 +2575,7 @@ static void reset_request(struct drm_i915_gem_request *request)
 	memset(vaddr + head, 0, request->postfix - head);
 }
 
-static void i915_gem_reset_engine(struct intel_engine_cs *engine)
+void i915_gem_reset_engine(struct intel_engine_cs *engine)
 {
 	struct drm_i915_gem_request *request;
 	struct i915_gem_context *incomplete_ctx;

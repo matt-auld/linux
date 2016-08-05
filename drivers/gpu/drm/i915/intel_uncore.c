@@ -1676,7 +1676,7 @@ int intel_wait_for_register(struct drm_i915_private *dev_priv,
 	return ret;
 }
 
-static int gen8_request_engine_reset(struct intel_engine_cs *engine)
+static int gen8_engine_reset_begin(struct intel_engine_cs *engine)
 {
 	struct drm_i915_private *dev_priv = engine->i915;
 	int ret;
@@ -1695,7 +1695,7 @@ static int gen8_request_engine_reset(struct intel_engine_cs *engine)
 	return ret;
 }
 
-static void gen8_unrequest_engine_reset(struct intel_engine_cs *engine)
+static void gen8_engine_reset_cancel(struct intel_engine_cs *engine)
 {
 	struct drm_i915_private *dev_priv = engine->i915;
 
@@ -1710,14 +1710,14 @@ static int gen8_reset_engines(struct drm_i915_private *dev_priv,
 	unsigned int tmp;
 
 	for_each_engine_masked(engine, dev_priv, engine_mask, tmp)
-		if (gen8_request_engine_reset(engine))
+		if (gen8_engine_reset_begin(engine))
 			goto not_ready;
 
 	return gen6_reset_engines(dev_priv, engine_mask);
 
 not_ready:
 	for_each_engine_masked(engine, dev_priv, engine_mask, tmp)
-		gen8_unrequest_engine_reset(engine);
+		gen8_engine_reset_cancel(engine);
 
 	return -EIO;
 }
@@ -1791,6 +1791,39 @@ int intel_guc_reset(struct drm_i915_private *dev_priv)
 	intel_uncore_forcewake_put(dev_priv, FORCEWAKE_ALL);
 
 	return ret;
+}
+
+/*
+ * On gen8+ a reset request has to be issued via the reset control register
+ * before a GPU engine can be reset in order to stop the command streamer
+ * and idle the engine. This replaces the legacy way of stopping an engine
+ * by writing to the stop ring bit in the MI_MODE register.
+ */
+int intel_engine_reset_begin(struct intel_engine_cs *engine)
+{
+	if (!intel_has_engine_reset(engine->i915)) {
+		DRM_ERROR("Engine Reset not supported on Gen%d\n",
+			  INTEL_GEN(engine->i915));
+		return -EINVAL;
+	}
+
+	return gen8_engine_reset_begin(engine);
+}
+
+/*
+ * It is possible to back off from a previously issued reset request by simply
+ * clearing the reset request bit in the reset control register.
+ */
+int intel_engine_reset_cancel(struct intel_engine_cs *engine)
+{
+	if (!intel_has_engine_reset(engine->i915)) {
+		DRM_ERROR("Request to clear reset not supported on Gen%d\n",
+			  INTEL_GEN(engine->i915));
+		return -EINVAL;
+	}
+
+	gen8_engine_reset_cancel(engine);
+	return 0;
 }
 
 bool intel_uncore_unclaimed_mmio(struct drm_i915_private *dev_priv)
