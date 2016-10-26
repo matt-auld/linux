@@ -98,18 +98,6 @@ struct shmem_falloc {
 	pgoff_t nr_unswapped;	/* how often writepage refused to swap out */
 };
 
-#ifdef CONFIG_TMPFS
-static unsigned long shmem_default_max_blocks(void)
-{
-	return totalram_pages / 2;
-}
-
-static unsigned long shmem_default_max_inodes(void)
-{
-	return min(totalram_pages - totalhigh_pages, totalram_pages / 2);
-}
-#endif
-
 static bool shmem_should_replace_page(struct page *page, gfp_t gfp);
 static int shmem_replace_page(struct page **pagep, gfp_t gfp,
 				struct shmem_inode_info *info, pgoff_t index);
@@ -1290,31 +1278,6 @@ redirty:
 	return 0;
 }
 
-#if defined(CONFIG_NUMA) && defined(CONFIG_TMPFS)
-static void shmem_show_mpol(struct seq_file *seq, struct mempolicy *mpol)
-{
-	char buffer[64];
-
-	if (!mpol || mpol->mode == MPOL_DEFAULT)
-		return;		/* show nothing */
-
-	mpol_to_str(buffer, sizeof(buffer), mpol);
-
-	seq_printf(seq, ",mpol=%s", buffer);
-}
-
-static struct mempolicy *shmem_get_sbmpol(struct shmem_sb_info *sbinfo)
-{
-	struct mempolicy *mpol = NULL;
-	if (sbinfo->mpol) {
-		spin_lock(&sbinfo->stat_lock);	/* prevent replace/use races */
-		mpol = sbinfo->mpol;
-		mpol_get(mpol);
-		spin_unlock(&sbinfo->stat_lock);
-	}
-	return mpol;
-}
-#else /* !CONFIG_NUMA || !CONFIG_TMPFS */
 static inline void shmem_show_mpol(struct seq_file *seq, struct mempolicy *mpol)
 {
 }
@@ -1322,7 +1285,6 @@ static inline struct mempolicy *shmem_get_sbmpol(struct shmem_sb_info *sbinfo)
 {
 	return NULL;
 }
-#endif /* CONFIG_NUMA && CONFIG_TMPFS */
 #ifndef CONFIG_NUMA
 #define vm_policy vm_private_data
 #endif
@@ -2134,16 +2096,6 @@ bool shmem_mapping(struct address_space *mapping)
 
 	return mapping->host->i_sb->s_op == &shmem_ops;
 }
-
-#ifdef CONFIG_TMPFS
-static const struct inode_operations shmem_symlink_inode_operations;
-static const struct inode_operations shmem_short_symlink_operations;
-
-#ifdef CONFIG_TMPFS_XATTR
-static int shmem_initxattrs(struct inode *, const struct xattr *, void *);
-#else
-#define shmem_initxattrs NULL
-#endif
 
 static int
 shmem_write_begin(struct file *file, struct address_space *mapping,
@@ -3077,114 +3029,14 @@ static const char *shmem_get_link(struct dentry *dentry,
 	return page_address(page);
 }
 
-#ifdef CONFIG_TMPFS_XATTR
-/*
- * Superblocks without xattr inode operations may get some security.* xattr
- * support from the LSM "for free". As soon as we have any other xattrs
- * like ACLs, we also need to implement the security.* handlers at
- * filesystem level, though.
- */
-
-/*
- * Callback for security_inode_init_security() for acquiring xattrs.
- */
-static int shmem_initxattrs(struct inode *inode,
-			    const struct xattr *xattr_array,
-			    void *fs_info)
-{
-	struct shmem_inode_info *info = SHMEM_I(inode);
-	const struct xattr *xattr;
-	struct simple_xattr *new_xattr;
-	size_t len;
-
-	for (xattr = xattr_array; xattr->name != NULL; xattr++) {
-		new_xattr = simple_xattr_alloc(xattr->value, xattr->value_len);
-		if (!new_xattr)
-			return -ENOMEM;
-
-		len = strlen(xattr->name) + 1;
-		new_xattr->name = kmalloc(XATTR_SECURITY_PREFIX_LEN + len,
-					  GFP_KERNEL);
-		if (!new_xattr->name) {
-			kfree(new_xattr);
-			return -ENOMEM;
-		}
-
-		memcpy(new_xattr->name, XATTR_SECURITY_PREFIX,
-		       XATTR_SECURITY_PREFIX_LEN);
-		memcpy(new_xattr->name + XATTR_SECURITY_PREFIX_LEN,
-		       xattr->name, len);
-
-		simple_xattr_list_add(&info->xattrs, new_xattr);
-	}
-
-	return 0;
-}
-
-static int shmem_xattr_handler_get(const struct xattr_handler *handler,
-				   struct dentry *unused, struct inode *inode,
-				   const char *name, void *buffer, size_t size)
-{
-	struct shmem_inode_info *info = SHMEM_I(inode);
-
-	name = xattr_full_name(handler, name);
-	return simple_xattr_get(&info->xattrs, name, buffer, size);
-}
-
-static int shmem_xattr_handler_set(const struct xattr_handler *handler,
-				   struct dentry *unused, struct inode *inode,
-				   const char *name, const void *value,
-				   size_t size, int flags)
-{
-	struct shmem_inode_info *info = SHMEM_I(inode);
-
-	name = xattr_full_name(handler, name);
-	return simple_xattr_set(&info->xattrs, name, value, size, flags);
-}
-
-static const struct xattr_handler shmem_security_xattr_handler = {
-	.prefix = XATTR_SECURITY_PREFIX,
-	.get = shmem_xattr_handler_get,
-	.set = shmem_xattr_handler_set,
-};
-
-static const struct xattr_handler shmem_trusted_xattr_handler = {
-	.prefix = XATTR_TRUSTED_PREFIX,
-	.get = shmem_xattr_handler_get,
-	.set = shmem_xattr_handler_set,
-};
-
-static const struct xattr_handler *shmem_xattr_handlers[] = {
-#ifdef CONFIG_TMPFS_POSIX_ACL
-	&posix_acl_access_xattr_handler,
-	&posix_acl_default_xattr_handler,
-#endif
-	&shmem_security_xattr_handler,
-	&shmem_trusted_xattr_handler,
-	NULL
-};
-
-static ssize_t shmem_listxattr(struct dentry *dentry, char *buffer, size_t size)
-{
-	struct shmem_inode_info *info = SHMEM_I(d_inode(dentry));
-	return simple_xattr_list(d_inode(dentry), &info->xattrs, buffer, size);
-}
-#endif /* CONFIG_TMPFS_XATTR */
-
 static const struct inode_operations shmem_short_symlink_operations = {
 	.readlink	= generic_readlink,
 	.get_link	= simple_get_link,
-#ifdef CONFIG_TMPFS_XATTR
-	.listxattr	= shmem_listxattr,
-#endif
 };
 
 static const struct inode_operations shmem_symlink_inode_operations = {
 	.readlink	= generic_readlink,
 	.get_link	= shmem_get_link,
-#ifdef CONFIG_TMPFS_XATTR
-	.listxattr	= shmem_listxattr,
-#endif
 };
 
 static struct dentry *shmem_get_parent(struct dentry *child)
@@ -3515,8 +3367,6 @@ err_name:
 	return error;
 }
 
-#endif /* CONFIG_TMPFS */
-
 static void shmem_put_super(struct super_block *sb)
 {
 	struct shmem_sb_info *sbinfo = SHMEM_SB(sb);
@@ -3543,28 +3393,7 @@ int shmem_fill_super(struct super_block *sb, void *data, int silent)
 	sbinfo->uid = current_fsuid();
 	sbinfo->gid = current_fsgid();
 	sb->s_fs_info = sbinfo;
-
-#ifdef CONFIG_TMPFS
-	/*
-	 * Per default we only allow half of the physical ram per
-	 * tmpfs instance, limiting inodes to one per page of lowmem;
-	 * but the internal instance is left unlimited.
-	 */
-	if (!(sb->s_flags & MS_KERNMOUNT)) {
-		sbinfo->max_blocks = shmem_default_max_blocks();
-		sbinfo->max_inodes = shmem_default_max_inodes();
-		if (shmem_parse_options(data, sbinfo, false)) {
-			err = -EINVAL;
-			goto failed;
-		}
-	} else {
-		sb->s_flags |= MS_NOUSER;
-	}
-	sb->s_export_op = &shmem_export_ops;
-	sb->s_flags |= MS_NOSEC;
-#else
 	sb->s_flags |= MS_NOUSER;
-#endif
 
 	spin_lock_init(&sbinfo->stat_lock);
 	if (percpu_counter_init(&sbinfo->used_blocks, 0, GFP_KERNEL))
@@ -3579,12 +3408,6 @@ int shmem_fill_super(struct super_block *sb, void *data, int silent)
 	sb->s_magic = TMPFS_MAGIC;
 	sb->s_op = &shmem_ops;
 	sb->s_time_gran = 1;
-#ifdef CONFIG_TMPFS_XATTR
-	sb->s_xattr = shmem_xattr_handlers;
-#endif
-#ifdef CONFIG_TMPFS_POSIX_ACL
-	sb->s_flags |= MS_POSIXACL;
-#endif
 
 	inode = shmem_get_inode(sb, NULL, S_IFDIR | sbinfo->mode, 0, VM_NORESERVE);
 	if (!inode)
@@ -3649,10 +3472,6 @@ static void shmem_destroy_inodecache(void)
 static const struct address_space_operations shmem_aops = {
 	.writepage	= shmem_writepage,
 	.set_page_dirty	= __set_page_dirty_no_writeback,
-#ifdef CONFIG_TMPFS
-	.write_begin	= shmem_write_begin,
-	.write_end	= shmem_write_end,
-#endif
 #ifdef CONFIG_MIGRATION
 	.migratepage	= migrate_page,
 #endif
@@ -3662,66 +3481,22 @@ static const struct address_space_operations shmem_aops = {
 static const struct file_operations shmem_file_operations = {
 	.mmap		= shmem_mmap,
 	.get_unmapped_area = shmem_get_unmapped_area,
-#ifdef CONFIG_TMPFS
-	.llseek		= shmem_file_llseek,
-	.read_iter	= shmem_file_read_iter,
-	.write_iter	= generic_file_write_iter,
-	.fsync		= noop_fsync,
-	.splice_read	= generic_file_splice_read,
-	.splice_write	= iter_file_splice_write,
-	.fallocate	= shmem_fallocate,
-#endif
 };
 
 static const struct inode_operations shmem_inode_operations = {
 	.getattr	= shmem_getattr,
 	.setattr	= shmem_setattr,
-#ifdef CONFIG_TMPFS_XATTR
-	.listxattr	= shmem_listxattr,
-	.set_acl	= simple_set_acl,
-#endif
 };
 
 static const struct inode_operations shmem_dir_inode_operations = {
-#ifdef CONFIG_TMPFS
-	.create		= shmem_create,
-	.lookup		= simple_lookup,
-	.link		= shmem_link,
-	.unlink		= shmem_unlink,
-	.symlink	= shmem_symlink,
-	.mkdir		= shmem_mkdir,
-	.rmdir		= shmem_rmdir,
-	.mknod		= shmem_mknod,
-	.rename		= shmem_rename2,
-	.tmpfile	= shmem_tmpfile,
-#endif
-#ifdef CONFIG_TMPFS_XATTR
-	.listxattr	= shmem_listxattr,
-#endif
-#ifdef CONFIG_TMPFS_POSIX_ACL
-	.setattr	= shmem_setattr,
-	.set_acl	= simple_set_acl,
-#endif
 };
 
 static const struct inode_operations shmem_special_inode_operations = {
-#ifdef CONFIG_TMPFS_XATTR
-	.listxattr	= shmem_listxattr,
-#endif
-#ifdef CONFIG_TMPFS_POSIX_ACL
-	.setattr	= shmem_setattr,
-	.set_acl	= simple_set_acl,
-#endif
 };
 
 static const struct super_operations shmem_ops = {
 	.alloc_inode	= shmem_alloc_inode,
 	.destroy_inode	= shmem_destroy_inode,
-#ifdef CONFIG_TMPFS
-	.statfs		= shmem_statfs,
-	.remount_fs	= shmem_remount_fs,
-	.show_options	= shmem_show_options,
-#endif
 	.evict_inode	= shmem_evict_inode,
 	.drop_inode	= generic_delete_inode,
 	.put_super	= shmem_put_super,
