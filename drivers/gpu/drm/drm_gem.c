@@ -33,11 +33,12 @@
 #include <linux/file.h>
 #include <linux/module.h>
 #include <linux/mman.h>
+#include <linux/swap.h>
 #include <linux/pagemap.h>
-#include <linux/shmem_fs.h>
 #include <linux/dma-buf.h>
 #include <drm/drmP.h>
 #include <drm/drm_vma_manager.h>
+#include <drm/drm_gemfs.h>
 #include <drm/drm_gem.h>
 #include "drm_internal.h"
 
@@ -137,7 +138,7 @@ int drm_gem_object_init(struct drm_device *dev,
 
 	drm_gem_private_object_init(dev, obj, size);
 
-	filp = shmem_file_setup("drm mm object", size, VM_NORESERVE);
+	filp = drm_gemfs_file_setup("drm mm object", size, VM_NORESERVE);
 	if (IS_ERR(filp))
 		return PTR_ERR(filp);
 
@@ -526,7 +527,7 @@ struct page **drm_gem_get_pages(struct drm_gem_object *obj)
 		return ERR_PTR(-ENOMEM);
 
 	for (i = 0; i < npages; i++) {
-		p = shmem_read_mapping_page(mapping, i);
+		p = drm_gemfs_read_page(obj, i);
 		if (IS_ERR(p))
 			goto fail;
 		pages[i] = p;

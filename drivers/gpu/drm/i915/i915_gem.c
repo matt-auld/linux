@@ -27,6 +27,7 @@
 
 #include <drm/drmP.h>
 #include <drm/drm_vma_manager.h>
+#include <drm/drm_gemfs.h>
 #include <drm/i915_drm.h>
 #include "i915_drv.h"
 #include "i915_vgpu.h"
@@ -35,7 +36,6 @@
 #include "intel_frontbuffer.h"
 #include "intel_mocs.h"
 #include <linux/reservation.h>
-#include <linux/shmem_fs.h>
 #include <linux/slab.h>
 #include <linux/swap.h>
 #include <linux/pci.h>
@@ -172,7 +172,6 @@ i915_gem_get_aperture_ioctl(struct drm_device *dev, void *data,
 static struct sg_table *
 i915_gem_object_get_pages_phys(struct drm_i915_gem_object *obj)
 {
-	struct address_space *mapping = obj->base.filp->f_mapping;
 	char *vaddr = obj->phys_handle->vaddr;
 	struct sg_table *st;
 	struct scatterlist *sg;
@@ -185,7 +184,7 @@ i915_gem_object_get_pages_phys(struct drm_i915_gem_object *obj)
 		struct page *page;
 		char *src;
 
-		page = shmem_read_mapping_page(mapping, i);
+		page = drm_gemfs_read_page(&obj->base, i);
 		if (IS_ERR(page))
 			return ERR_CAST(page);
 
@@ -241,7 +240,6 @@ i915_gem_object_put_pages_phys(struct drm_i915_gem_object *obj,
 	__i915_gem_object_release_shmem(obj);
 
 	if (obj->mm.dirty) {
-		struct address_space *mapping = obj->base.filp->f_mapping;
 		char *vaddr = obj->phys_handle->vaddr;
 		int i;
 
@@ -249,7 +247,7 @@ i915_gem_object_put_pages_phys(struct drm_i915_gem_object *obj,
 			struct page *page;
 			char *dst;
 
-			page = shmem_read_mapping_page(mapping, i);
+			page = drm_gemfs_read_page(&obj->base, i);
 			if (IS_ERR(page))
 				continue;
 
@@ -2117,7 +2115,7 @@ i915_gem_object_truncate(struct drm_i915_gem_object *obj)
 	 * To do this we must instruct the shmfs to drop all of its
 	 * backing pages, *now*.
 	 */
-	shmem_truncate_range(file_inode(obj->base.filp), 0, (loff_t)-1);
+	drm_gemfs_truncate(&obj->base);
 	obj->mm.madv = __I915_MADV_PURGED;
 }
 
@@ -2237,7 +2235,6 @@ i915_gem_object_get_pages_gtt(struct drm_i915_gem_object *obj)
 {
 	struct drm_i915_private *dev_priv = to_i915(obj->base.dev);
 	int page_count, i;
-	struct address_space *mapping;
 	struct sg_table *st;
 	struct scatterlist *sg;
 	struct sgt_iter sgt_iter;
@@ -2273,27 +2270,27 @@ i915_gem_object_get_pages_gtt(struct drm_i915_gem_object *obj)
 	 *
 	 * Fail silently without starting the shrinker
 	 */
-	mapping = obj->base.filp->f_mapping;
-	gfp = mapping_gfp_constraint(mapping, ~(__GFP_IO | __GFP_RECLAIM));
+	gfp = mapping_gfp_constraint(obj->base.filp->f_mapping,
+				     ~(__GFP_IO | __GFP_RECLAIM));
 	gfp |= __GFP_NORETRY | __GFP_NOWARN;
 	sg = st->sgl;
 	st->nents = 0;
 	for (i = 0; i < page_count; i++) {
-		page = shmem_read_mapping_page_gfp(mapping, i, gfp);
+		page = drm_gemfs_read_page_gfp(&obj->base, i, gfp);
 		if (IS_ERR(page)) {
 			i915_gem_shrink(dev_priv,
 					page_count,
 					I915_SHRINK_BOUND |
 					I915_SHRINK_UNBOUND |
 					I915_SHRINK_PURGEABLE);
-			page = shmem_read_mapping_page_gfp(mapping, i, gfp);
+			page = drm_gemfs_read_page_gfp(&obj->base, i, gfp);
 		}
 		if (IS_ERR(page)) {
 			/* We've tried hard to allocate the memory by reaping
 			 * our own buffer, now let the real VM do its job and
 			 * go down in flames if truly OOM.
 			 */
-			page = shmem_read_mapping_page(mapping, i);
+			page = drm_gemfs_read_page(&obj->base, i);
 			if (IS_ERR(page)) {
 				ret = PTR_ERR(page);
 				goto err_pages;
