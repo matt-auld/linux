@@ -31,6 +31,7 @@
 #include <drm/drm_mode.h>
 #include <drm/drm_plane_helper.h>
 #include <drm/drm_print.h>
+#include <linux/sync_file.h>
 
 #include "drm_crtc_internal.h"
 
@@ -712,6 +713,17 @@ int drm_atomic_plane_set_property(struct drm_plane *plane,
 		drm_atomic_set_fb_for_plane(state, fb);
 		if (fb)
 			drm_framebuffer_unreference(fb);
+	} else if (property == config->prop_in_fence_fd) {
+		if (state->fence)
+			return -EINVAL;
+
+		if (U642I64(val) == -1)
+			return 0;
+
+		state->fence = sync_file_get_fence(val);
+		if (!state->fence)
+			return -EINVAL;
+
 	} else if (property == config->prop_crtc_id) {
 		struct drm_crtc *crtc = drm_crtc_find(dev, val);
 		return drm_atomic_set_crtc_for_plane(state, crtc);
@@ -773,6 +785,8 @@ drm_atomic_plane_get_property(struct drm_plane *plane,
 
 	if (property == config->prop_fb_id) {
 		*val = (state->fb) ? state->fb->base.id : 0;
+	} else if (property == config->prop_in_fence_fd) {
+		*val = -1;
 	} else if (property == config->prop_crtc_id) {
 		*val = (state->crtc) ? state->crtc->base.id : 0;
 	} else if (property == config->prop_crtc_x) {
@@ -861,9 +875,10 @@ static int drm_atomic_plane_check(struct drm_plane *plane,
 	/* Check whether this plane supports the fb pixel format. */
 	ret = drm_plane_check_pixel_format(plane, state->fb->pixel_format);
 	if (ret) {
-		char *format_name = drm_get_format_name(state->fb->pixel_format);
-		DRM_DEBUG_ATOMIC("Invalid pixel format %s\n", format_name);
-		kfree(format_name);
+		struct drm_format_name_buf format_name;
+		DRM_DEBUG_ATOMIC("Invalid pixel format %s\n",
+		                 drm_get_format_name(state->fb->pixel_format,
+		                                     &format_name));
 		return ret;
 	}
 
@@ -917,9 +932,10 @@ static void drm_atomic_plane_print_state(struct drm_printer *p,
 	if (state->fb) {
 		struct drm_framebuffer *fb = state->fb;
 		int i, n = drm_format_num_planes(fb->pixel_format);
+		struct drm_format_name_buf format_name;
 
 		drm_printf(p, "\t\tformat=%s\n",
-				drm_get_format_name(fb->pixel_format));
+		              drm_get_format_name(fb->pixel_format, &format_name));
 		drm_printf(p, "\t\tsize=%dx%d\n", fb->width, fb->height);
 		drm_printf(p, "\t\tlayers:\n");
 		for (i = 0; i < n; i++) {
