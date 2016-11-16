@@ -2193,6 +2193,13 @@ static void i915_address_space_init(struct i915_address_space *vm,
 	list_add_tail(&vm->global_link, &dev_priv->vm_list);
 }
 
+static void i915_address_space_fini(struct i915_address_space *vm)
+{
+	i915_gem_timeline_fini(&vm->timeline);
+	drm_mm_takedown(&vm->mm);
+	list_del(&vm->global_link);
+}
+
 static void gtt_write_workarounds(struct drm_device *dev)
 {
 	struct drm_i915_private *dev_priv = to_i915(dev);
@@ -2279,7 +2286,7 @@ i915_ppgtt_create(struct drm_i915_private *dev_priv,
 	return ppgtt;
 }
 
-void  i915_ppgtt_release(struct kref *kref)
+void i915_ppgtt_release(struct kref *kref)
 {
 	struct i915_hw_ppgtt *ppgtt =
 		container_of(kref, struct i915_hw_ppgtt, ref);
@@ -2291,9 +2298,7 @@ void  i915_ppgtt_release(struct kref *kref)
 	WARN_ON(!list_empty(&ppgtt->base.inactive_list));
 	WARN_ON(!list_empty(&ppgtt->base.unbound_list));
 
-	i915_gem_timeline_fini(&ppgtt->base.timeline);
-	list_del(&ppgtt->base.global_link);
-	drm_mm_takedown(&ppgtt->base.mm);
+	i915_address_space_fini(&ppgtt->base);
 
 	ppgtt->base.cleanup(&ppgtt->base);
 	kfree(ppgtt);
@@ -2834,9 +2839,7 @@ void i915_ggtt_cleanup_hw(struct drm_i915_private *dev_priv)
 
 	if (drm_mm_initialized(&ggtt->base.mm)) {
 		intel_vgt_deballoon(dev_priv);
-
-		drm_mm_takedown(&ggtt->base.mm);
-		list_del(&ggtt->base.global_link);
+		i915_address_space_fini(&ggtt->base);
 	}
 
 	ggtt->base.cleanup(&ggtt->base);
