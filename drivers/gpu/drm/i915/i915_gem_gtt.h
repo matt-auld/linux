@@ -41,6 +41,9 @@
 #include "i915_gem_request.h"
 
 #define I915_GTT_PAGE_SIZE 4096UL
+#define I915_GTT_PAGE_SIZE_64K SZ_64K
+#define I915_GTT_PAGE_SIZE_2M  SZ_2M
+#define I915_GTT_PAGE_SIZE_1G  SZ_1G
 #define I915_GTT_MIN_ALIGNMENT I915_GTT_PAGE_SIZE
 
 #define I915_FENCE_REG_NONE -1
@@ -142,6 +145,8 @@ typedef uint64_t gen8_ppgtt_pml4e_t;
 #define GEN8_PPAT_UC			(0<<0)
 #define GEN8_PPAT_ELLC_OVERRIDE		(0<<2)
 #define GEN8_PPAT(i, x)			((uint64_t) (x) << ((i) * 8))
+
+#define GEN8_I915_GTT_PAGE_SIZE (1 << 7)
 
 struct sg_table;
 
