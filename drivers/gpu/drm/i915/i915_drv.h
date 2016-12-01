@@ -869,6 +869,7 @@ struct intel_device_info {
 	enum intel_platform platform;
 	u8 ring_mask; /* Rings supported by the HW */
 	u8 num_rings;
+	unsigned long page_size_mask; /* page sizes supported by the HW */
 #define DEFINE_FLAG(name) u8 name:1
 	DEV_INFO_FOR_EACH_FLAG(DEFINE_FLAG);
 #undef DEFINE_FLAG
