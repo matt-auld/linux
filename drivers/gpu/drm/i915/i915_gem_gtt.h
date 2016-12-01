@@ -43,7 +43,17 @@
 #include "i915_selftest.h"
 
 #define I915_GTT_PAGE_SIZE 4096UL
+#define I915_GTT_PAGE_SIZE_64K 65536UL
+#define I915_GTT_PAGE_SIZE_2M 2097152UL
+#define I915_GTT_PAGE_SIZE_1G 1073741824UL
+
+#define I915_GTT_PAGE_SIZE_MASK (I915_GTT_PAGE_SIZE | \
+				 I915_GTT_PAGE_SIZE_64K | \
+				 I915_GTT_PAGE_SIZE_2M | \
+				 I915_GTT_PAGE_SIZE_1G)
+
 #define I915_GTT_MIN_ALIGNMENT I915_GTT_PAGE_SIZE
+
 
 #define I915_FENCE_REG_NONE -1
 #define I915_MAX_NUM_FENCES 32
@@ -142,6 +152,10 @@ typedef u64 gen8_ppgtt_pml4e_t;
 #define GEN8_PPAT_UC			(0<<0)
 #define GEN8_PPAT_ELLC_OVERRIDE		(0<<2)
 #define GEN8_PPAT(i, x)			((u64)(x) << ((i) * 8))
+
+#define GEN8_PDPE_PS_1G  BIT(7)
+#define GEN8_PDE_PS_2M   BIT(7)
+#define GEN8_PDE_IPS_64K BIT(11)
 
 struct sg_table;
 
