@@ -102,9 +102,20 @@ typedef uint64_t gen8_ppgtt_pml4e_t;
  * The difference as compared to normal x86 3 level page table is the PDPEs are
  * programmed via register.
  *
- * GEN8 48b legacy style address is defined as a 4 level page table:
- * 47:39 | 38:30 | 29:21 | 20:12 |  11:0
- * PML4E | PDPE  |  PDE  |  PTE  | offset
+ * GEN8 48b legacy style address with 4K or 64K page is defined as a 4 level
+ * page table:
+ * 47:39 | 38:30 | 29:21 | 20:12 |  11:0  |
+ * PML4E | PDPE  |  PDE  |  PTE  | offset |
+ *
+ * GEN8 48b legacy style address with 2M page is defined as a 3 level page
+ * table:
+ * 47:39 | 38:30 | 29:21 |     20:0       |
+ * PML4E | PDPE  |  PDE  |    offset      |
+ *
+ * GEN8 48b legacy style address with 1G page is defined as a 2 level page
+ * table:
+ * 47:39 | 38:30 |         29:0           |
+ * PML4E | PDPE  |        offset          |
  */
 #define GEN8_PML4ES_PER_PML4		512
 #define GEN8_PML4E_SHIFT		39
@@ -140,6 +151,7 @@ typedef uint64_t gen8_ppgtt_pml4e_t;
 #define GEN8_PPAT_ELLC_OVERRIDE		(0<<2)
 #define GEN8_PPAT(i, x)			((uint64_t) (x) << ((i) * 8))
 
+#define GEN8_GTT_PAGE_SZ (1 << 7)
 #define GTT_PAGE_SZ_4K  BIT(0)
 #define GTT_PAGE_SZ_64K BIT(1)
 #define GTT_PAGE_SZ_2M  BIT(2)
@@ -204,6 +216,7 @@ struct i915_page_table {
 struct i915_page_directory {
 	struct i915_page_dma base;
 
+	unsigned long *used_pdes_2M;
 	unsigned long *used_pdes;
 	struct i915_page_table *page_table[I915_PDES]; /* PDEs */
 };
@@ -211,6 +224,7 @@ struct i915_page_directory {
 struct i915_page_directory_pointer {
 	struct i915_page_dma base;
 
+	unsigned long *used_pdpes_1G;
 	unsigned long *used_pdpes;
 	struct i915_page_directory **page_directory;
 };

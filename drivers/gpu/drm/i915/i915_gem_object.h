@@ -87,6 +87,8 @@ struct drm_i915_gem_object {
 
 	unsigned long flags;
 
+	unsigned int page_sz;
+
 	/**
 	 * Have we taken a reference for the object for incomplete GPU
 	 * activity?

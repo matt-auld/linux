@@ -210,7 +210,8 @@ static gen8_pte_t gen8_pte_encode(dma_addr_t addr,
 }
 
 static gen8_pde_t gen8_pde_encode(const dma_addr_t addr,
-				  const enum i915_cache_level level)
+				  const enum i915_cache_level level,
+				  unsigned int page_sz)
 {
 	gen8_pde_t pde = _PAGE_PRESENT | _PAGE_RW;
 	pde |= addr;
@@ -218,6 +219,7 @@ static gen8_pde_t gen8_pde_encode(const dma_addr_t addr,
 		pde |= PPAT_CACHED_PDE_INDEX;
 	else
 		pde |= PPAT_UNCACHED_INDEX;
+
 	return pde;
 }
 
@@ -621,7 +623,7 @@ static void gen8_initialize_pml4(struct i915_address_space *vm,
 	gen8_ppgtt_pml4e_t scratch_pml4e;
 
 	scratch_pml4e = gen8_pml4e_encode(px_dma(vm->scratch_pdp),
-					  I915_CACHE_LLC);
+					  I915_CACHE_LLC, 0);
 
 	fill_px(vm->i915, pml4, scratch_pml4e);
 }
@@ -651,7 +653,8 @@ gen8_setup_pml4e(struct i915_hw_ppgtt *ppgtt,
 	gen8_ppgtt_pml4e_t *pagemap = kmap_px(pml4);
 
 	WARN_ON(!USES_FULL_48BIT_PPGTT(to_i915(ppgtt->base.dev)));
-	pagemap[index] = gen8_pml4e_encode(px_dma(pdp), I915_CACHE_LLC);
+	pagemap[index] = gen8_pml4e_encode(px_dma(pdp), I915_CACHE_LLC,
+					   page_sz);
 	kunmap_px(ppgtt, pagemap);
 }
 
@@ -796,6 +799,17 @@ static bool gen8_ppgtt_clear_pdp(struct i915_address_space *vm,
 	uint64_t pdpe;
 
 	gen8_for_each_pdpe(pd, pdp, start, length, pdpe) {
+		/*
+		 * If we are operating in 1G page mode, then the pdpe is
+		 * effectively our pte and so we can end our walk here and skip
+		 * all the lower levels
+		 */
+		if (test_and_clear_bit(pdpe, pdp->used_pdpes_1G)) {
+			__clear_bit(pdpe, pdp->used_pdpes);
+			gen8_setup_pdpe(ppgtt, pdp, vm->scratch_pd, pdpe);
+			continue;
+		}
+
 		if (WARN_ON(!pd))
 			break;
 
@@ -803,7 +817,6 @@ static bool gen8_ppgtt_clear_pdp(struct i915_address_space *vm,
 			__clear_bit(pdpe, pdp->used_pdpes);
 			if (USES_FULL_48BIT_PPGTT(dev_priv))
 				gen8_setup_pdpe(ppgtt, pdp, vm->scratch_pd, pdpe);
-
 			free_pd(vm->i915, pd);
 		}
 	}
@@ -852,6 +865,72 @@ static void gen8_ppgtt_clear_range(struct i915_address_space *vm,
 		gen8_ppgtt_clear_pml4(vm, &ppgtt->pml4, start, length);
 	else
 		gen8_ppgtt_clear_pdp(vm, &ppgtt->pdp, start, length);
+}
+
+static void
+gen8_ppgtt_insert_pde_entries(struct i915_address_space *vm,
+			      struct i915_page_directory_pointer *pdp,
+			      struct sg_page_iter *sg_iter,
+			      uint64_t start,
+			      enum i915_cache_level cache_level)
+{
+	struct i915_hw_ppgtt *ppgtt = i915_vm_to_ppgtt(vm);
+	unsigned pdpe = gen8_pdpe_index(start);
+	unsigned pde = gen8_pde_index(start);
+	gen8_pte_t *pd_vaddr = NULL;
+
+	while (__sg_page_iter_next(sg_iter)) {
+		if (pd_vaddr == NULL) {
+			struct i915_page_directory *pd =
+				pdp->page_directory[pdpe];
+			pd_vaddr = kmap_px(pd);
+		}
+
+		pd_vaddr[pde] =
+			gen8_pte_encode(sg_page_iter_dma_address(sg_iter),
+					cache_level) | GEN8_GTT_PAGE_SZ;
+
+		if (++pd == I915_PDES) {
+			kunmap_px(ppgtt, pd_vaddr);
+			pd_vaddr = NULL;
+			if (++pdpe == I915_PDPES_PER_PDP(vm->i915))
+				break;
+			pde = 0;
+		}
+	}
+
+	if (pdp_vaddr)
+		kunmap_px(ppgtt, pd_vaddr);
+}
+
+static void
+gen8_ppgtt_insert_pdpe_entries(struct i915_address_space *vm,
+			       struct i915_page_directory_pointer *pdp,
+			       struct sg_page_iter *sg_iter,
+			       uint64_t start,
+			       enum i915_cache_level cache_level)
+{
+	struct i915_hw_ppgtt *ppgtt = i915_vm_to_ppgtt(vm);
+	unsigned pdpe = gen8_pdpe_index(start);
+	gen8_pte_t *pdp_vaddr = NULL;
+
+	while (__sg_page_iter_next(sg_iter)) {
+		if (pdp_vaddr == NULL)
+			pdp_vaddr = kmap_px(pdp);
+
+		pdp_vaddr[pdpe] =
+			gen8_pte_encode(sg_page_iter_dma_address(sg_iter),
+					cache_level) | GEN8_GTT_PAGE_SZ;
+
+		if (++pdpe == I915_PDPES_PER_PDP(vm->i915)) {
+			kunmap_px(ppgtt, pdpe_vaddr);
+			pdp_vaddr = NULL;
+			break;
+		}
+	}
+
+	if (pdp_vaddr)
+		kunmap_px(ppgtt, pdp_vaddr);
 }
 
 static void
@@ -915,8 +994,15 @@ static void gen8_ppgtt_insert_entries(struct i915_address_space *vm,
 		uint64_t length = (uint64_t)pages->orig_nents << PAGE_SHIFT;
 
 		gen8_for_each_pml4e(pdp, &ppgtt->pml4, start, length, pml4e) {
-			gen8_ppgtt_insert_pte_entries(vm, pdp, &sg_iter,
-						      start, cache_level);
+			if (page_sz == SZ_1G)
+				gen8_ppgtt_insert_pdpe_entries(vm, pdp, &sg_iter,
+							       start, cache_level);
+			else if (page_sz == SZ_2M)
+				gen8_ppgtt_insert_pde_entries(vm, pdp, &sg_iter,
+							      start, cache_level);
+			else
+				gen8_ppgtt_insert_pte_entries(vm, pdp, &sg_iter,
+							      start, cache_level);
 		}
 	}
 }
@@ -1169,6 +1255,11 @@ gen8_ppgtt_alloc_page_directories(struct i915_address_space *vm,
 		if (test_bit(pdpe, pdp->used_pdpes))
 			continue;
 
+		if (page_sz == SZ_1G) {
+			__set_bit(pdpe, pdp->used_pdpes_1G);
+			continue;
+		}
+
 		pd = alloc_pd(dev_priv);
 		if (IS_ERR(pd))
 			goto unwind_out;
@@ -1282,7 +1373,8 @@ err_out:
 static int gen8_alloc_va_range_3lvl(struct i915_address_space *vm,
 				    struct i915_page_directory_pointer *pdp,
 				    uint64_t start,
-				    uint64_t length)
+				    uint64_t length,
+				    unsigned int page_sz)
 {
 	struct i915_hw_ppgtt *ppgtt = i915_vm_to_ppgtt(vm);
 	unsigned long *new_page_dirs, *new_page_tables;
@@ -1309,22 +1401,35 @@ static int gen8_alloc_va_range_3lvl(struct i915_address_space *vm,
 
 	/* Do the allocations first so we can easily bail out */
 	ret = gen8_ppgtt_alloc_page_directories(vm, pdp, start, length,
-						new_page_dirs);
+						new_page_dirs, page_sz);
 	if (ret) {
 		free_gen8_temp_bitmaps(new_page_dirs, new_page_tables);
 		return ret;
 	}
 
-	/* For every page directory referenced, allocate page tables */
-	gen8_for_each_pdpe(pd, pdp, start, length, pdpe) {
-		ret = gen8_ppgtt_alloc_pagetabs(vm, pd, start, length,
-						new_page_tables + pdpe * BITS_TO_LONGS(I915_PDES));
-		if (ret)
-			goto err_out;
-	}
+	/*
+	 * With 1G page mode, each pdpe will effectively act like our pte,
+	 * hence everything is much simplified since we now only have
+	 * 2-levels and so we can happily skip everything else.
+	 */
+	if (page_sz == SZ_1G) {
+		free_gen8_temp_bitmaps(new_page_dirs, new_page_tables);
+		return;
+	} 
+	
+	if (page_sz < SZ_2M) {
+		/* For every page directory referenced, allocate page tables */
+		gen8_for_each_pdpe(pd, pdp, start, length, pdpe) {
+			ret = gen8_ppgtt_alloc_pagetabs(vm, pd, start, length,
+							new_page_tables + pdpe *
+							BITS_TO_LONGS(I915_PDES));
+			if (ret)
+				goto err_out;
+		}
 
-	start = orig_start;
-	length = orig_length;
+		start = orig_start;
+		length = orig_length;
+	}
 
 	/* Allocations have completed successfully, so set the bitmaps, and do
 	 * the mappings. */
@@ -1340,9 +1445,21 @@ static int gen8_alloc_va_range_3lvl(struct i915_address_space *vm,
 
 		gen8_for_each_pde(pt, pd, pd_start, pd_len, pde) {
 			/* Same reasoning as pd */
-			WARN_ON(!pt);
+			WARN_ON(!pt && page_sz < SZ_2M);
 			WARN_ON(!pd_len);
 			WARN_ON(!gen8_pte_count(pd_start, pd_len));
+
+			/*
+			 * With 2M page mode, each pde will effectively act
+			 * like our pte, hence everything is much simplified
+			 * since we now only have 3-levels and so we can
+			 * happily skip everything else.
+			 */
+			if (page_sz == SZ_2M) {
+				__set_bit(pde, pd->used_pdes);
+				__set_bit(pde, pd->used_pdes_2M);
+				continue;
+			}
 
 			/* Set our used ptes within the page table */
 			bitmap_set(pt->used_ptes,
@@ -1394,7 +1511,8 @@ err_out:
 static int gen8_alloc_va_range_4lvl(struct i915_address_space *vm,
 				    struct i915_pml4 *pml4,
 				    uint64_t start,
-				    uint64_t length)
+				    uint64_t length,
+				    unsigned int page_sz)
 {
 	DECLARE_BITMAP(new_pdps, GEN8_PML4ES_PER_PML4);
 	struct i915_hw_ppgtt *ppgtt = i915_vm_to_ppgtt(vm);
@@ -1421,7 +1539,8 @@ static int gen8_alloc_va_range_4lvl(struct i915_address_space *vm,
 	gen8_for_each_pml4e(pdp, pml4, start, length, pml4e) {
 		WARN_ON(!pdp);
 
-		ret = gen8_alloc_va_range_3lvl(vm, pdp, start, length);
+		ret = gen8_alloc_va_range_3lvl(vm, pdp, start, length,
+					       page_sz);
 		if (ret)
 			goto err_out;
 
@@ -1441,12 +1560,15 @@ err_out:
 }
 
 static int gen8_alloc_va_range(struct i915_address_space *vm,
-			       uint64_t start, uint64_t length)
+			       uint64_t start,
+			       uint64_t length,
+			       unsigned int page_sz)
 {
 	struct i915_hw_ppgtt *ppgtt = i915_vm_to_ppgtt(vm);
 
 	if (USES_FULL_48BIT_PPGTT(vm->i915))
-		return gen8_alloc_va_range_4lvl(vm, &ppgtt->pml4, start, length);
+		return gen8_alloc_va_range_4lvl(vm, &ppgtt->pml4, start,
+						length, page_sz);
 	else
 		return gen8_alloc_va_range_3lvl(vm, &ppgtt->pdp, start, length);
 }
@@ -1909,7 +2031,9 @@ static void gen6_ppgtt_insert_entries(struct i915_address_space *vm,
 }
 
 static int gen6_alloc_va_range(struct i915_address_space *vm,
-			       uint64_t start_in, uint64_t length_in)
+			       uint64_t start_in,
+			       uint64_t length_in,
+			       unsigned int unused)
 {
 	DECLARE_BITMAP(new_page_tables, I915_PDES);
 	struct drm_i915_private *dev_priv = vm->i915;
@@ -2777,7 +2901,8 @@ int i915_gem_init_ggtt(struct drm_i915_private *dev_priv)
 
 		if (ppgtt->base.allocate_va_range) {
 			ret = ppgtt->base.allocate_va_range(&ppgtt->base, 0,
-							    ppgtt->base.total);
+							    ppgtt->base.total,
+							    SZ_4K);
 			if (ret)
 				goto err_ppgtt_cleanup;
 		}
