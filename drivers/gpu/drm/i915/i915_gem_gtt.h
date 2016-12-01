@@ -140,6 +140,11 @@ typedef uint64_t gen8_ppgtt_pml4e_t;
 #define GEN8_PPAT_ELLC_OVERRIDE		(0<<2)
 #define GEN8_PPAT(i, x)			((uint64_t) (x) << ((i) * 8))
 
+#define GTT_PAGE_SZ_4K  BIT(0)
+#define GTT_PAGE_SZ_64K BIT(1)
+#define GTT_PAGE_SZ_2M  BIT(2)
+#define GTT_PAGE_SZ_1G  BIT(3)
+
 struct sg_table;
 
 enum i915_ggtt_view_type {

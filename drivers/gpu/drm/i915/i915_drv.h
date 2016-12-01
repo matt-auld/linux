@@ -765,6 +765,7 @@ struct intel_device_info {
 	u16 gen_mask;
 	u8 ring_mask; /* Rings supported by the HW */
 	u8 num_rings;
+	u8 page_sz_mask; /* page sizes supported by the HW */
 #define DEFINE_FLAG(name) u8 name:1
 	DEV_INFO_FOR_EACH_FLAG(DEFINE_FLAG);
 #undef DEFINE_FLAG
