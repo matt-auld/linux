@@ -785,7 +785,7 @@ static bool gen8_ppgtt_clear_pd(struct i915_address_space *vm,
 						 I915_CACHE_LLC);
 
 	gen8_for_each_pde(pt, pd, start, length, pde) {
-		if (WARN_ON(!pd->page_table[pde]))
+		if (WARN_ON(!pt))
 			break;
 
 		if (gen8_ppgtt_clear_pt(vm, pt, start, length)) {
@@ -816,7 +816,7 @@ static bool gen8_ppgtt_clear_pdp(struct i915_address_space *vm,
 	uint64_t pdpe;
 
 	gen8_for_each_pdpe(pd, pdp, start, length, pdpe) {
-		if (WARN_ON(!pdp->page_directory[pdpe]))
+		if (WARN_ON(!pd))
 			break;
 
 		if (gen8_ppgtt_clear_pd(vm, pd, start, length)) {
@@ -850,7 +850,7 @@ static void gen8_ppgtt_clear_pml4(struct i915_address_space *vm,
 	GEM_BUG_ON(!USES_FULL_48BIT_PPGTT(vm->i915));
 
 	gen8_for_each_pml4e(pdp, pml4, start, length, pml4e) {
-		if (WARN_ON(!pml4->pdps[pml4e]))
+		if (WARN_ON(!pdp))
 			break;
 
 		if (gen8_ppgtt_clear_pdp(vm, pdp, start, length)) {
