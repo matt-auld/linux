@@ -1690,6 +1690,9 @@ static int gen8_ppgtt_init(struct i915_hw_ppgtt *ppgtt)
 	ppgtt->base.bind_vma = ppgtt_bind_vma;
 	ppgtt->debug_dump = gen8_dump_ppgtt;
 
+	if (INTEL_INFO(dev_priv)->page_sz_mask & GTT_PAGE_SZ_64K)
+		ppgtt->base->color_adjust = i915_ppgtt_color_adjust;
+
 	if (USES_FULL_48BIT_PPGTT(dev_priv)) {
 		ret = setup_px(dev_priv, &ppgtt->pml4);
 		if (ret)
@@ -2826,6 +2829,42 @@ static void i915_ggtt_color_adjust(struct drm_mm_node *node,
 					node_list);
 	if (node && node->allocated && node->color != color)
 		*end -= 4096;
+}
+
+static void i915_ppgtt_color_adjust(struct drm_mm_node *node,
+				    unsigned long color,
+				    u64 *offset,
+				    u64 *end)
+{
+	u64 start = *offset;
+	u64 length = *end - *offset;
+
+	/*
+	 * For 64K page support we have some nasty restrictions where 4K and
+	 * 64K pages can be placed, though only if we happen to use both for a
+	 * given address space, since the pde itself is flagged to indicate 64K
+	 * or 4K mode, which of course means that for any pd they must all be
+	 * the same.
+	 */
+	if (!(color & (GTT_PAGE_SZ_64K | GTT_PAGE_SZ_4K)))
+		return;
+
+	/*
+	 * In the rather unlikely case that the object is truly huge or if we
+	 * happen to straddle the end of pd, and we didn't use a larger page
+	 * size, we need to ensure *all* pd's for the range are compatible for
+	 * the allocation to proceed. In most cases we should only need to look
+	 * at one pd. Truly a royal-pain-in-the-ass.
+	 */
+	gen8_for_each_pml4e(pdp, pml4, start, length, iter) {
+		gen8_for_each_pdpe(pd, pdp, start, length, pdpe) {
+			if ((pd->is_mode_64K && color != GTT_PAGE_SZ_64K) ||
+			    (!pd->is_mode_64K && color == GTT_PAGE_SZ_64K)) {
+				*start = *end;
+				return;
+			}
+		}
+	}
 }
 
 int i915_gem_init_ggtt(struct drm_i915_private *dev_priv)
