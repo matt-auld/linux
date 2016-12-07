@@ -873,6 +873,42 @@ static void gen8_ppgtt_clear_range(struct i915_address_space *vm,
 }
 
 static void
+gen8_ppgtt_insert_pde_entries(struct i915_address_space *vm,
+			      struct i915_page_directory_pointer *pdp,
+			      struct sg_page_iter *sg_iter,
+			      uint64_t start,
+			      enum i915_cache_level cache_level)
+{
+	struct i915_hw_ppgtt *ppgtt = i915_vm_to_ppgtt(vm);
+	unsigned pdpe = gen8_pdpe_index(start);
+	unsigned pde = gen8_pde_index(start);
+	gen8_pte_t *pd_vaddr = NULL;
+
+	while (__sg_page_iter_next(sg_iter)) {
+		if (pd_vaddr == NULL) {
+			struct i915_page_directory *pd =
+				pdp->page_directory[pdpe];
+			pd_vaddr = kmap_px(pd);
+		}
+
+		pd_vaddr[pde] =
+			gen8_pte_encode(sg_page_iter_dma_address(sg_iter),
+					cache_level) | GEN8_GTT_PAGE_SZ;
+
+		if (++pd == I915_PDES) {
+			kunmap_px(ppgtt, pd_vaddr);
+			pd_vaddr = NULL;
+			if (++pdpe == I915_PDPES_PER_PDP(vm->i915))
+				break;
+			pde = 0;
+		}
+	}
+
+	if (pdp_vaddr)
+		kunmap_px(ppgtt, pd_vaddr);
+}
+
+static void
 gen8_ppgtt_insert_pdpe_entries(struct i915_address_space *vm,
 			       struct i915_page_directory_pointer *pdp,
 			       struct sg_page_iter *sg_iter,
@@ -966,6 +1002,9 @@ static void gen8_ppgtt_insert_entries(struct i915_address_space *vm,
 			if (page_sz == SZ_1G)
 				gen8_ppgtt_insert_pdpe_entries(vm, pdp, &sg_iter,
 							       start, cache_level);
+			else if (page_sz == SZ_2M)
+				gen8_ppgtt_insert_pde_entries(vm, pdp, &sg_iter,
+							      start, cache_level);
 			else
 				gen8_ppgtt_insert_pte_entries(vm, pdp, &sg_iter,
 							      start, cache_level);
