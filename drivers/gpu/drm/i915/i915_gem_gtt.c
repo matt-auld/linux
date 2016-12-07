@@ -1371,7 +1371,8 @@ err_out:
 static int gen8_alloc_va_range_3lvl(struct i915_address_space *vm,
 				    struct i915_page_directory_pointer *pdp,
 				    uint64_t start,
-				    uint64_t length)
+				    uint64_t length,
+				    unsigned int page_sz)
 {
 	struct i915_hw_ppgtt *ppgtt = i915_vm_to_ppgtt(vm);
 	unsigned long *new_page_dirs, *new_page_tables;
@@ -1398,22 +1399,35 @@ static int gen8_alloc_va_range_3lvl(struct i915_address_space *vm,
 
 	/* Do the allocations first so we can easily bail out */
 	ret = gen8_ppgtt_alloc_page_directories(vm, pdp, start, length,
-						new_page_dirs);
+						new_page_dirs, page_sz);
 	if (ret) {
 		free_gen8_temp_bitmaps(new_page_dirs, new_page_tables);
 		return ret;
 	}
 
-	/* For every page directory referenced, allocate page tables */
-	gen8_for_each_pdpe(pd, pdp, start, length, pdpe) {
-		ret = gen8_ppgtt_alloc_pagetabs(vm, pd, start, length,
-						new_page_tables + pdpe * BITS_TO_LONGS(I915_PDES));
-		if (ret)
-			goto err_out;
-	}
+	/*
+	 * With 1G page mode, each pdpe will effectively act like our pte,
+	 * hence everything is much simplified since we now only have
+	 * 2-levels and so we can happily skip everything else.
+	 */
+	if (page_sz == SZ_1G) {
+		free_gen8_temp_bitmaps(new_page_dirs, new_page_tables);
+		return;
+	} 
+	
+	if (page_sz < SZ_2M) {
+		/* For every page directory referenced, allocate page tables */
+		gen8_for_each_pdpe(pd, pdp, start, length, pdpe) {
+			ret = gen8_ppgtt_alloc_pagetabs(vm, pd, start, length,
+							new_page_tables + pdpe *
+							BITS_TO_LONGS(I915_PDES));
+			if (ret)
+				goto err_out;
+		}
 
-	start = orig_start;
-	length = orig_length;
+		start = orig_start;
+		length = orig_length;
+	}
 
 	/* Allocations have completed successfully, so set the bitmaps, and do
 	 * the mappings. */
@@ -1495,7 +1509,8 @@ err_out:
 static int gen8_alloc_va_range_4lvl(struct i915_address_space *vm,
 				    struct i915_pml4 *pml4,
 				    uint64_t start,
-				    uint64_t length)
+				    uint64_t length,
+				    unsigned int page_sz)
 {
 	DECLARE_BITMAP(new_pdps, GEN8_PML4ES_PER_PML4);
 	struct i915_hw_ppgtt *ppgtt = i915_vm_to_ppgtt(vm);
