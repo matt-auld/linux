@@ -3977,6 +3977,8 @@ void i915_gem_object_init(struct drm_i915_gem_object *obj,
 
 	obj->ops = ops;
 
+	obj->page_size = I915_GTT_PAGE_SIZE;
+
 	reservation_object_init(&obj->__builtin_resv);
 	obj->resv = &obj->__builtin_resv;
 
