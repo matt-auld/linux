@@ -432,6 +432,7 @@ i915_vma_insert(struct i915_vma *vma, u64 size, u64 alignment, u64 flags)
 	struct drm_i915_gem_object *obj = vma->obj;
 	u64 start, end;
 	int ret;
+	unsigned long color;
 
 	GEM_BUG_ON(vma->flags & (I915_VMA_GLOBAL_BIND | I915_VMA_LOCAL_BIND));
 	GEM_BUG_ON(drm_mm_node_allocated(&vma->node));
@@ -474,6 +475,11 @@ i915_vma_insert(struct i915_vma *vma, u64 size, u64 alignment, u64 flags)
 	if (ret)
 		return ret;
 
+	if (i915_is_ggtt(vma->vm))
+		color = obj->cache_level;
+	else
+		color = obj->page_size;
+
 	if (flags & PIN_OFFSET_FIXED) {
 		u64 offset = flags & PIN_OFFSET_MASK;
 		if (!IS_ALIGNED(offset, alignment) ||
@@ -483,13 +489,13 @@ i915_vma_insert(struct i915_vma *vma, u64 size, u64 alignment, u64 flags)
 		}
 
 		ret = i915_gem_gtt_reserve(vma->vm, &vma->node,
-					   size, offset, obj->cache_level,
+					   size, offset, color,
 					   flags);
 		if (ret)
 			goto err_unpin;
 	} else {
 		ret = i915_gem_gtt_insert(vma->vm, &vma->node,
-					  size, alignment, obj->cache_level,
+					  size, alignment, color,
 					  start, end, flags);
 		if (ret)
 			goto err_unpin;
