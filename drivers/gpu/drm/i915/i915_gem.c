@@ -3350,8 +3350,10 @@ restart:
 	    cpu_cache_is_coherent(obj->base.dev, obj->cache_level))
 		obj->cache_dirty = true;
 
-	list_for_each_entry(vma, &obj->vma_list, obj_link)
-		vma->node.color = cache_level;
+	if (i915_is_ggtt(vma->vm)) {
+		list_for_each_entry(vma, &obj->vma_list, obj_link)
+			vma->node.color = cache_level;
+	}
 	obj->cache_level = cache_level;
 
 	return 0;
