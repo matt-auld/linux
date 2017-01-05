@@ -2726,10 +2726,10 @@ void i915_gem_gtt_finish_pages(struct drm_i915_gem_object *obj,
 	dma_unmap_sg(kdev, pages->sgl, pages->nents, PCI_DMA_BIDIRECTIONAL);
 }
 
-static void i915_gtt_color_adjust(const struct drm_mm_node *node,
-				  unsigned long color,
-				  u64 *start,
-				  u64 *end)
+static void i915_ggtt_color_adjust(const struct drm_mm_node *node,
+				   unsigned long color,
+				   u64 *start,
+				   u64 *end)
 {
 	if (node->color != color)
 		*start += I915_GTT_PAGE_SIZE;
@@ -3271,7 +3271,7 @@ int i915_ggtt_init_hw(struct drm_i915_private *dev_priv)
 	i915_address_space_init(&ggtt->base, dev_priv, "[global]");
 	ggtt->base.total += PAGE_SIZE;
 	if (!HAS_LLC(dev_priv))
-		ggtt->base.mm.color_adjust = i915_gtt_color_adjust;
+		ggtt->base.mm.color_adjust = i915_ggtt_color_adjust;
 	mutex_unlock(&dev_priv->drm.struct_mutex);
 
 	if (!io_mapping_init_wc(&dev_priv->ggtt.mappable,
