@@ -499,12 +499,203 @@ err:
 	return err;
 }
 
+static bool assert_partial(struct drm_i915_gem_object *obj,
+			   struct i915_vma *vma,
+			   unsigned long offset,
+			   unsigned long size)
+{
+	struct sgt_iter sgt;
+	dma_addr_t dma;
+
+	for_each_sgt_dma(dma, sgt, vma->pages) {
+		dma_addr_t src;
+
+		if (!size) {
+			pr_err("Partial scattergather list too long\n");
+			return false;
+		}
+
+		src = i915_gem_object_get_dma_address(obj, offset);
+		if (src != dma) {
+			pr_err("DMA mismatch for partial page offset %lu\n",
+			       offset);
+			return false;
+		}
+
+		offset++;
+		size--;
+	}
+
+	return true;
+}
+
+static int igt_vma_partial(void *arg)
+{
+	struct drm_i915_private *i915 = arg;
+	const unsigned int npages = 1021; /* prime! */
+	struct drm_i915_gem_object *obj;
+	unsigned int sz, offset, loop;
+	struct i915_vma *vma;
+	int err = -ENOMEM;
+
+	/* Create lots of different VMA for the object and check that
+	 * we are returned the same VMA when we later request the same range.
+	 */
+
+	obj = i915_gem_object_create_internal(i915, npages*PAGE_SIZE);
+	if (IS_ERR(obj))
+		goto err;
+
+	for (loop = 0; loop <= 1; loop++) { /* exercise both create/lookup */
+		unsigned int count, nvma;
+
+		nvma = loop;
+		for_each_prime_number_from(sz, 1, npages) {
+			for_each_prime_number_from(offset, 0, npages - sz) {
+				struct i915_address_space *vm =
+					&i915->ggtt.base;
+				struct i915_ggtt_view view;
+
+				view.type = I915_GGTT_VIEW_PARTIAL;
+				view.partial.offset = offset;
+				view.partial.size = sz;
+
+				if (sz == npages)
+					view.type = I915_GGTT_VIEW_NORMAL;
+
+				vma = i915_vma_instance(obj, vm, &view);
+				if (IS_ERR(vma)) {
+					err = PTR_ERR(vma);
+					goto err_object;
+				}
+
+				if (!i915_vma_is_ggtt(vma) || vma->vm != vm) {
+					pr_err("VMA is not in the GGTT!\n");
+					err = -EINVAL;
+					goto err_object;
+				}
+
+				if (i915_vma_compare(vma,
+						     vma->vm,
+						     &vma->ggtt_view)) {
+					pr_err("VMA compare failed with itself\n");
+					err = -EINVAL;
+					goto err_object;
+				}
+
+				err = i915_vma_pin(vma, 0, 0, PIN_GLOBAL);
+				if (err)
+					goto err_object;
+
+				if (vma->size != sz*PAGE_SIZE) {
+					pr_err("VMA is wrong size, expected %lu, found %llu\n",
+					       sz*PAGE_SIZE, vma->size);
+					err = -EINVAL;
+					goto err_object;
+				}
+
+				if (vma->node.size < vma->size) {
+					pr_err("VMA binding too small, expected %llu, found %llu\n",
+					       vma->size, vma->node.size);
+					err = -EINVAL;
+					goto err_object;
+				}
+
+				if (view.type != I915_GGTT_VIEW_NORMAL) {
+					if (memcmp(&vma->ggtt_view, &view, sizeof(view))) {
+						pr_err("VMA mismatch upon creation!\n");
+						err = -EINVAL;
+						goto err_object;
+					}
+
+					if (vma->pages == obj->mm.pages) {
+						pr_err("VMA using unrotated object pages!\n");
+						err = -EINVAL;
+						goto err_object;
+					}
+				}
+
+				if (!assert_partial(obj, vma, offset, sz)) {
+					pr_err("Inconsistent partial pages for (offset=%d, size=%d)\n", offset, sz);
+					err = -EINVAL;
+					goto err_object;
+				}
+
+				i915_vma_unpin(vma);
+				nvma++;
+			}
+		}
+
+		count = loop;
+		list_for_each_entry(vma, &obj->vma_list, obj_link)
+			count++;
+		if (count != nvma) {
+			pr_err("All partial vma were not recorded on the obj->vma_list: found %u, expected %u\n",
+			       count, nvma);
+			err = -EINVAL;
+			goto err_object;
+		}
+
+		/* Create a mapping for the entire object, just for extra fun */
+		vma = i915_vma_instance(obj, &i915->ggtt.base, NULL);
+		if (IS_ERR(vma)) {
+			err = PTR_ERR(vma);
+			goto err_object;
+		}
+
+		if (!i915_vma_is_ggtt(vma)) {
+			pr_err("VMA is not in the GGTT!\n");
+			err = -EINVAL;
+			goto err_object;
+		}
+
+		err = i915_vma_pin(vma, 0, 0, PIN_GLOBAL);
+		if (err)
+			goto err_object;
+
+		if (vma->size != obj->base.size) {
+			pr_err("VMA is wrong size, expected %lu, found %llu\n",
+			       sz*PAGE_SIZE, vma->size);
+			err = -EINVAL;
+			goto err_object;
+		}
+
+		if (vma->node.size < vma->size) {
+			pr_err("VMA binding too small, expected %llu, found %llu\n",
+			       vma->size, vma->node.size);
+			err = -EINVAL;
+			goto err_object;
+		}
+
+		if (vma->ggtt_view.type != I915_GGTT_VIEW_NORMAL) {
+			pr_err("Not the normal ggtt view! Found %d\n",
+			       vma->ggtt_view.type);
+			err = -EINVAL;
+			goto err_object;
+		}
+
+		if (vma->pages != obj->mm.pages) {
+			pr_err("VMA not using object pages!\n");
+			err = -EINVAL;
+			goto err_object;
+		}
+
+		i915_vma_unpin(vma);
+	}
+
+err_object:
+	i915_gem_object_put(obj);
+err:
+	return err;
+}
+
 int i915_vma_mock_selftests(void)
 {
 	static const struct i915_subtest tests[] = {
 		SUBTEST(igt_vma_create),
 		SUBTEST(igt_vma_pin1),
 		SUBTEST(igt_vma_rotate),
+		SUBTEST(igt_vma_partial),
 	};
 	struct drm_i915_private *i915;
 	int err;
