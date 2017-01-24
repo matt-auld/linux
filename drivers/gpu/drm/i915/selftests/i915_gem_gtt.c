@@ -25,6 +25,7 @@
 #include <linux/prime_numbers.h>
 
 #include "i915_selftest.h"
+#include "i915_random.h"
 #include "mock_drm.h"
 #include "huge_gem_object.h"
 
@@ -280,6 +281,86 @@ err:
 	return err;
 }
 
+static int drunk_hole(struct drm_i915_private *i915,
+		      struct i915_address_space *vm,
+		      u64 hole_start, u64 hole_end,
+		      unsigned long end_time)
+{
+	I915_RND_STATE(seed_prng);
+	unsigned int size;
+
+	/* Keep creating larger objects until one cannot fit into the hole */
+	for (size = 12; (hole_end - hole_start) >> size; size++) {
+		I915_RND_SUBSTATE(prng, seed_prng);
+		struct drm_i915_gem_object *obj;
+		unsigned int *order, count, n;
+		u64 hole_size;
+
+		hole_size = (hole_end - hole_start) >> size;
+		if (hole_size > KMALLOC_MAX_SIZE / sizeof(u32))
+			hole_size = KMALLOC_MAX_SIZE / sizeof(u32);
+		count = hole_size;
+		do {
+			count >>= 1;
+			order = i915_random_order(count, &prng);
+		} while (!order && count);
+		if (!order)
+			break;
+
+		/* Ignore allocation failures (i.e. don't report them as
+		 * a test failure) as we are purposefully allocating very
+		 * large objects without checking that we have sufficient
+		 * memory. We expect to hit -ENOMEM.
+		 */
+
+		obj = huge_gem_object(i915, PAGE_SIZE, BIT_ULL(size));
+		if (IS_ERR(obj)) {
+			kfree(order);
+			break;
+		}
+
+		GEM_BUG_ON(obj->base.size != BIT_ULL(size));
+
+		if (i915_gem_object_pin_pages(obj)) {
+			i915_gem_object_put(obj);
+			kfree(order);
+			break;
+		}
+
+		for (n = 0; n < count; n++) {
+			if (vm->allocate_va_range &&
+			    vm->allocate_va_range(vm,
+						  order[n] * BIT_ULL(size),
+						  BIT_ULL(size)))
+				break;
+
+			vm->insert_entries(vm, obj->mm.pages,
+					   order[n] * BIT_ULL(size),
+					   I915_CACHE_NONE, 0);
+			if (igt_timeout(end_time,
+					"%s timed out after %d/%d\n",
+					__func__, n, count)) {
+				hole_start = hole_end; /* quit */
+				break;
+			}
+		}
+		count = n;
+
+		i915_random_reorder(order, count, &prng);
+		for (n = 0; n < count; n++)
+			vm->clear_range(vm,
+					order[n]* BIT_ULL(size),
+					BIT_ULL(size));
+
+		i915_gem_object_unpin_pages(obj);
+		i915_gem_object_put(obj);
+
+		kfree(order);
+	}
+
+	return 0;
+}
+
 static int igt_ppgtt_fill(void *arg)
 {
 	struct drm_i915_private *dev_priv = arg;
@@ -352,6 +433,44 @@ err_unlock:
 	return err;
 }
 
+static int igt_ppgtt_drunk(void *arg)
+{
+	struct drm_i915_private *dev_priv = arg;
+	struct drm_file *file;
+	struct i915_hw_ppgtt *ppgtt;
+	IGT_TIMEOUT(end_time);
+	int err;
+
+	/* Try binding many VMA in a random pattern within the ppgtt */
+
+	if (!USES_FULL_PPGTT(dev_priv))
+		return 0;
+
+	file = mock_file(dev_priv);
+	if (IS_ERR(file))
+		return PTR_ERR(file);
+
+	mutex_lock(&dev_priv->drm.struct_mutex);
+	ppgtt = i915_ppgtt_create(dev_priv, file->driver_priv, "mock");
+	if (IS_ERR(ppgtt)) {
+		err = PTR_ERR(ppgtt);
+		goto err_unlock;
+	}
+	GEM_BUG_ON(offset_in_page(ppgtt->base.total));
+
+	err = drunk_hole(dev_priv, &ppgtt->base,
+			 0, ppgtt->base.total,
+			 end_time);
+
+	i915_ppgtt_close(&ppgtt->base);
+	i915_ppgtt_put(ppgtt);
+err_unlock:
+	mutex_unlock(&dev_priv->drm.struct_mutex);
+
+	mock_file_free(dev_priv, file);
+	return err;
+}
+
 static int igt_ggtt_fill(void *arg)
 {
 	struct drm_i915_private *i915 = arg;
@@ -412,12 +531,44 @@ static int igt_ggtt_walk(void *arg)
 	return err;
 }
 
+static int igt_ggtt_drunk(void *arg)
+{
+	struct drm_i915_private *i915 = arg;
+	struct i915_ggtt *ggtt = &i915->ggtt;
+	u64 hole_start, hole_end;
+	struct drm_mm_node *node;
+	IGT_TIMEOUT(end_time);
+	int err;
+
+	/* Try binding many VMA in a random pattern within the ggtt */
+
+	mutex_lock(&i915->drm.struct_mutex);
+	drm_mm_for_each_hole(node, &ggtt->base.mm, hole_start, hole_end) {
+		if (ggtt->base.mm.color_adjust)
+			ggtt->base.mm.color_adjust(node, 0,
+						   &hole_start, &hole_end);
+		if (hole_start >= hole_end)
+			continue;
+
+		err = drunk_hole(i915, &ggtt->base,
+				 hole_start, hole_end,
+				 end_time);
+		if (err)
+			break;
+	}
+	mutex_unlock(&i915->drm.struct_mutex);
+
+	return err;
+}
+
 int i915_gem_gtt_live_selftests(struct drm_i915_private *i915)
 {
 	static const struct i915_subtest tests[] = {
 		SUBTEST(igt_ppgtt_alloc),
+		SUBTEST(igt_ppgtt_drunk),
 		SUBTEST(igt_ppgtt_walk),
 		SUBTEST(igt_ppgtt_fill),
+		SUBTEST(igt_ggtt_drunk),
 		SUBTEST(igt_ggtt_walk),
 		SUBTEST(igt_ggtt_fill),
 	};
