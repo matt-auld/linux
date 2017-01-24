@@ -81,7 +81,7 @@ u32 i915_gem_fence_size(struct drm_i915_private *i915,
 	GEM_BUG_ON(!stride);
 
 	if (INTEL_GEN(i915) >= 4) {
-		stride *= i915_gem_tile_height(tiling);
+		stride *= i915_gem_tile_height(INTEL_GEN(i915), tiling);
 		GEM_BUG_ON(!IS_ALIGNED(stride, I965_FENCE_PAGE));
 		return roundup(size, stride);
 	}

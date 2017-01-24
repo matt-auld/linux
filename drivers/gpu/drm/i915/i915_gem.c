@@ -1696,7 +1696,8 @@ i915_gem_mmap_ioctl(struct drm_device *dev, void *data,
 
 static unsigned int tile_row_pages(struct drm_i915_gem_object *obj)
 {
-	return i915_gem_object_get_tile_row_size(obj) >> PAGE_SHIFT;
+	int gen = INTEL_GEN(to_i915(obj->base.dev));
+	return i915_gem_object_get_tile_row_size(obj, gen) >> PAGE_SHIFT;
 }
 
 /**
