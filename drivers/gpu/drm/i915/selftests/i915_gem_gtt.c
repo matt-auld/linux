@@ -100,7 +100,8 @@ static void close_object_list(struct list_head *objects,
 		struct i915_vma *vma;
 
 		vma = i915_vma_instance(obj, vm, NULL);
-		if (!IS_ERR(vma))
+		/* Only ppgtt vma may be closed before the object is freed */
+		if (!IS_ERR(vma) && !i915_vma_is_ggtt(vma))
 			i915_vma_close(vma);
 
 		list_del(&obj->batch_pool_link);
@@ -260,12 +261,45 @@ out_unlock:
 	return err;
 }
 
+static int igt_ggtt_fill(void *arg)
+{
+	struct drm_i915_private *i915 = arg;
+	struct i915_ggtt *ggtt = &i915->ggtt;
+	u64 hole_start, hole_end;
+	struct drm_mm_node *node;
+	IGT_TIMEOUT(end_time);
+	int err;
+
+	/* Try binding many VMA working outwards from either edge */
+
+	mutex_lock(&i915->drm.struct_mutex);
+	drm_mm_for_each_hole(node, &ggtt->base.mm, hole_start, hole_end) {
+		if (ggtt->base.mm.color_adjust)
+			ggtt->base.mm.color_adjust(node, 0,
+						   &hole_start, &hole_end);
+		if (hole_start >= hole_end)
+			continue;
+
+		err = fill_hole(i915, &ggtt->base,
+				hole_start, hole_end,
+				end_time);
+		if (err)
+			break;
+	}
+	mutex_unlock(&i915->drm.struct_mutex);
+
+	return err;
+}
+
 int i915_gem_gtt_live_selftests(struct drm_i915_private *i915)
 {
 	static const struct i915_subtest tests[] = {
 		SUBTEST(igt_ppgtt_alloc),
 		SUBTEST(igt_ppgtt_fill),
+		SUBTEST(igt_ggtt_fill),
 	};
+
+	GEM_BUG_ON(offset_in_page(i915->ggtt.base.total));
 
 	return i915_subtests(tests, i915);
 }
