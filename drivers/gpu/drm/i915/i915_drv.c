@@ -1292,7 +1292,8 @@ out_pci_disable:
 	pci_disable_device(pdev);
 out_free_priv:
 	i915_load_error(dev_priv, "Device initialization failed (%d)\n", ret);
-	drm_dev_unref(&dev_priv->drm);
+	drm_dev_fini(&dev_priv->drm);
+	kfree(dev_priv);
 	return ret;
 }
 
@@ -1351,8 +1352,16 @@ void i915_driver_unload(struct drm_device *dev)
 	i915_driver_cleanup_mmio(dev_priv);
 
 	intel_display_power_put(dev_priv, POWER_DOMAIN_INIT);
+}
+
+static void i915_driver_release(struct drm_device *dev)
+{
+	struct drm_i915_private *dev_priv = to_i915(dev);
 
 	i915_driver_cleanup_early(dev_priv);
+	drm_dev_fini(&dev_priv->drm);
+
+	kfree(dev_priv);
 }
 
 static int i915_driver_open(struct drm_device *dev, struct drm_file *file)
@@ -2594,6 +2603,7 @@ static struct drm_driver driver = {
 	.driver_features =
 	    DRIVER_HAVE_IRQ | DRIVER_IRQ_SHARED | DRIVER_GEM | DRIVER_PRIME |
 	    DRIVER_RENDER | DRIVER_MODESET,
+	.release = i915_driver_release,
 	.open = i915_driver_open,
 	.lastclose = i915_driver_lastclose,
 	.preclose = i915_driver_preclose,
