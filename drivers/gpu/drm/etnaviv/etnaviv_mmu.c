@@ -107,6 +107,7 @@ static int etnaviv_iommu_find_iova(struct etnaviv_iommu *mmu,
 				   struct drm_mm_node *node, size_t size)
 {
 	struct etnaviv_vram_mapping *free = NULL;
+	enum drm_mm_insert_mode mode = DRM_MM_INSERT_LOW;
 	int ret;
 
 	lockdep_assert_held(&mmu->lock);
@@ -117,15 +118,10 @@ static int etnaviv_iommu_find_iova(struct etnaviv_iommu *mmu,
 		struct list_head list;
 		bool found;
 
-		/*
-		 * XXX: The DRM_MM_SEARCH_BELOW is really a hack to trick
-		 * drm_mm into giving out a low IOVA after address space
-		 * rollover. This needs a proper fix.
-		 */
 		ret = drm_mm_insert_node_in_range(&mmu->mm, node,
-			size, 0, mmu->last_iova, ~0UL,
-			mmu->last_iova ? DRM_MM_SEARCH_DEFAULT : DRM_MM_SEARCH_BELOW);
-
+						  size, 0, 0,
+						  mmu->last_iova, U64_MAX,
+						  mode);
 		if (ret != -ENOSPC)
 			break;
 
@@ -140,7 +136,7 @@ static int etnaviv_iommu_find_iova(struct etnaviv_iommu *mmu,
 		}
 
 		/* Try to retire some entries */
-		drm_mm_scan_init(&scan, &mmu->mm, size, 0, 0, 0);
+		drm_mm_scan_init(&scan, &mmu->mm, size, 0, 0, mode);
 
 		found = 0;
 		INIT_LIST_HEAD(&list);
@@ -191,6 +187,8 @@ static int etnaviv_iommu_find_iova(struct etnaviv_iommu *mmu,
 			list_del_init(&m->mmu_node);
 			list_del_init(&m->scan_node);
 		}
+
+		mode = DRM_MM_INSERT_EVICT;
 
 		/*
 		 * We removed enough mappings so that the new allocation will
