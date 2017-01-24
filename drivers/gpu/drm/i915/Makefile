@@ -3,6 +3,7 @@
 # Direct Rendering Infrastructure (DRI) in XFree86 4.1.0 and higher.
 
 subdir-ccflags-$(CONFIG_DRM_I915_WERROR) := -Werror
+subdir-ccflags-$(CONFIG_DRM_I915_SELFTEST) += -I$(src) -I$(src)/selftests
 subdir-ccflags-y += \
 	$(call as-instr,movntdqa (%eax)$(comma)%xmm0,-DCONFIG_AS_MOVNTDQA)
 
@@ -116,6 +117,9 @@ i915-y += dvo_ch7017.o \
 
 # Post-mortem debug and GPU hang state capture
 i915-$(CONFIG_DRM_I915_CAPTURE_ERROR) += i915_gpu_error.o
+i915-$(CONFIG_DRM_I915_SELFTEST) += \
+	selftests/i915_random.o \
+	selftests/i915_selftest.o
 
 # virtual gpu code
 i915-y += i915_vgpu.o
