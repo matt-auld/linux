@@ -225,6 +225,61 @@ err:
 	return err;
 }
 
+static int walk_hole(struct drm_i915_private *i915,
+		     struct i915_address_space *vm,
+		     u64 hole_start, u64 hole_end,
+		     unsigned long end_time)
+{
+	struct drm_i915_gem_object *obj;
+	struct i915_vma *vma;
+	u64 addr;
+	int err;
+
+	obj = i915_gem_object_create_internal(i915, PAGE_SIZE);
+	if (IS_ERR(obj))
+		return PTR_ERR(obj);
+
+	vma = i915_vma_instance(obj, vm, NULL);
+	if (IS_ERR(vma)) {
+		err = PTR_ERR(vma);
+		goto err;
+	}
+
+	for (addr = hole_start; addr < hole_end; addr += PAGE_SIZE) {
+		err = i915_vma_pin(vma, 0, 0,
+				   addr | PIN_OFFSET_FIXED | PIN_USER);
+		if (err) {
+			pr_err("Walk bind failed at %llx with err=%d\n",
+			       addr, err);
+			break;
+		}
+		i915_vma_unpin(vma);
+
+		if (!drm_mm_node_allocated(&vma->node) ||
+		    i915_vma_misplaced(vma, 0, 0, addr | PIN_OFFSET_FIXED)) {
+			pr_err("Walk incorrect at %llx\n", addr);
+			err = -EINVAL;
+			break;
+		}
+
+		err = i915_vma_unbind(vma);
+		if (err) {
+			pr_err("Walk unbind failed at %llx with err=%d\n",
+			       addr, err);
+			break;
+		}
+
+		if (igt_timeout(end_time, "Walk timed out at %llx\n", addr))
+			break;
+	}
+
+	if (!i915_vma_is_ggtt(vma))
+		i915_vma_close(vma);
+err:
+	i915_gem_object_put(obj);
+	return err;
+}
+
 static int igt_ppgtt_fill(void *arg)
 {
 	struct drm_i915_private *dev_priv = arg;
@@ -261,6 +316,42 @@ out_unlock:
 	return err;
 }
 
+static int igt_ppgtt_walk(void *arg)
+{
+	struct drm_i915_private *dev_priv = arg;
+	struct drm_file *file;
+	struct i915_hw_ppgtt *ppgtt;
+	IGT_TIMEOUT(end_time);
+	int err;
+
+	/* Try binding a single VMA in different positions along the ppgtt */
+
+	if (!USES_FULL_PPGTT(dev_priv))
+		return 0;
+
+	file = mock_file(dev_priv);
+	if (IS_ERR(file))
+		return PTR_ERR(file);
+
+	mutex_lock(&dev_priv->drm.struct_mutex);
+	ppgtt = i915_ppgtt_create(dev_priv, file->driver_priv, "mock");
+	if (IS_ERR(ppgtt)) {
+		err = PTR_ERR(ppgtt);
+		goto err_unlock;
+	}
+	GEM_BUG_ON(offset_in_page(ppgtt->base.total));
+
+	err = walk_hole(dev_priv, &ppgtt->base, 0, ppgtt->base.total, end_time);
+
+	i915_ppgtt_close(&ppgtt->base);
+	i915_ppgtt_put(ppgtt);
+err_unlock:
+	mutex_unlock(&dev_priv->drm.struct_mutex);
+
+	mock_file_free(dev_priv, file);
+	return err;
+}
+
 static int igt_ggtt_fill(void *arg)
 {
 	struct drm_i915_private *i915 = arg;
@@ -291,11 +382,43 @@ static int igt_ggtt_fill(void *arg)
 	return err;
 }
 
+static int igt_ggtt_walk(void *arg)
+{
+	struct drm_i915_private *i915 = arg;
+	struct i915_ggtt *ggtt = &i915->ggtt;
+	u64 hole_start, hole_end;
+	struct drm_mm_node *node;
+	IGT_TIMEOUT(end_time);
+	int err;
+
+	/* Try binding a single VMA in different positions along the ggtt */
+
+	mutex_lock(&i915->drm.struct_mutex);
+	drm_mm_for_each_hole(node, &ggtt->base.mm, hole_start, hole_end) {
+		if (ggtt->base.mm.color_adjust)
+			ggtt->base.mm.color_adjust(node, 0,
+						   &hole_start, &hole_end);
+		if (hole_end <= hole_start)
+			continue;
+
+		err = walk_hole(i915, &ggtt->base,
+				hole_start, hole_end,
+				end_time);
+		if (err)
+			break;
+	}
+	mutex_unlock(&i915->drm.struct_mutex);
+
+	return err;
+}
+
 int i915_gem_gtt_live_selftests(struct drm_i915_private *i915)
 {
 	static const struct i915_subtest tests[] = {
 		SUBTEST(igt_ppgtt_alloc),
+		SUBTEST(igt_ppgtt_walk),
 		SUBTEST(igt_ppgtt_fill),
+		SUBTEST(igt_ggtt_walk),
 		SUBTEST(igt_ggtt_fill),
 	};
 
