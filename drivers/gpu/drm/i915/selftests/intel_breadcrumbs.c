@@ -263,11 +263,182 @@ out_engines:
 	return err;
 }
 
+struct igt_wakeup {
+	struct task_struct *tsk;
+	atomic_t *ready, *set, *done;
+	struct intel_engine_cs *engine;
+	unsigned long flags;
+	wait_queue_head_t *wq;
+	u32 seqno;
+};
+
+static int wait_atomic(atomic_t *p)
+{
+	schedule();
+	return 0;
+}
+
+static int wait_atomic_timeout(atomic_t *p)
+{
+	return schedule_timeout(10 * HZ) ? 0 : -ETIMEDOUT;
+}
+
+static int igt_wakeup_thread(void *arg)
+{
+	struct igt_wakeup *w = arg;
+	struct intel_wait wait;
+
+	while (!kthread_should_stop()) {
+		DEFINE_WAIT(ready);
+
+		for (;;) {
+			prepare_to_wait(w->wq, &ready, TASK_INTERRUPTIBLE);
+			if (atomic_read(w->ready) == 0)
+				break;
+
+			schedule();
+		}
+		finish_wait(w->wq, &ready);
+		if (atomic_dec_and_test(w->set))
+			wake_up_atomic_t(w->set);
+
+		if (test_bit(0, &w->flags))
+			break;
+
+		intel_wait_init(&wait, w->seqno);
+		intel_engine_add_wait(w->engine, &wait);
+		for (;;) {
+			set_current_state(TASK_UNINTERRUPTIBLE);
+			if (i915_seqno_passed(intel_engine_get_seqno(w->engine),
+					      w->seqno))
+				break;
+
+			schedule();
+		}
+		intel_engine_remove_wait(w->engine, &wait);
+		__set_current_state(TASK_RUNNING);
+
+		if (atomic_dec_and_test(w->done))
+			wake_up_atomic_t(w->done);
+	}
+
+	if (atomic_dec_and_test(w->done))
+		wake_up_atomic_t(w->done);
+	return 0;
+}
+
+static void igt_wake_all_sync(atomic_t *ready,
+			      atomic_t *set,
+			      atomic_t *done,
+			      wait_queue_head_t *wq,
+			      int count)
+{
+	atomic_set(set, count);
+	atomic_set(done, count);
+
+	atomic_set(ready, 0);
+	wake_up_all(wq);
+
+	wait_on_atomic_t(set, wait_atomic, TASK_UNINTERRUPTIBLE);
+	atomic_set(ready, count);
+}
+
+static int igt_wakeup(void *arg)
+{
+	const int state = TASK_UNINTERRUPTIBLE;
+	struct intel_engine_cs *engine = arg;
+	struct igt_wakeup *waiters;
+	DECLARE_WAIT_QUEUE_HEAD_ONSTACK(wq);
+	const int count = 4096;
+	const u32 max_seqno = count / 4;
+	atomic_t ready, set, done;
+	int err = -ENOMEM;
+	int n, step;
+
+	mock_engine_reset(engine);
+
+	waiters = drm_malloc_gfp(count, sizeof(*waiters), GFP_TEMPORARY);
+	if (!waiters)
+		goto out_engines;
+
+	/* Create a large number of threads, each waiting on a random seqno.
+	 * Multiple waiters will be waiting for the same seqno.
+	 */
+	atomic_set(&ready, count);
+	for (n = 0; n < count; n++) {
+		waiters[n].wq = &wq;
+		waiters[n].ready = &ready;
+		waiters[n].set = &set;
+		waiters[n].done = &done;
+		waiters[n].engine = engine;
+		waiters[n].flags = 0;
+
+		waiters[n].tsk = kthread_run(igt_wakeup_thread, &waiters[n],
+					     "i915/igt:%d", n);
+		if (IS_ERR(waiters[n].tsk))
+			goto out_waiters;
+
+		get_task_struct(waiters[n].tsk);
+	}
+
+	for (step = 1; step <= max_seqno; step <<= 1) {
+		u32 seqno;
+
+		for (n = 0; n < count; n++)
+			waiters[n].seqno = 1 + get_random_int() % max_seqno;
+
+		mock_seqno_advance(engine, 0);
+		igt_wake_all_sync(&ready, &set, &done, &wq, count);
+
+		for (seqno = 1; seqno <= max_seqno + step; seqno += step) {
+			usleep_range(50, 500);
+			mock_seqno_advance(engine, seqno);
+		}
+		GEM_BUG_ON(intel_engine_get_seqno(engine) < 1 + max_seqno);
+
+		err = wait_on_atomic_t(&done, wait_atomic_timeout, state);
+		if (err) {
+			pr_err("Timed out waiting for %d remaining waiters\n",
+			       atomic_read(&done));
+			break;
+		}
+
+		err = check_rbtree_empty(engine);
+		if (err)
+			break;
+	}
+
+out_waiters:
+	for (n = 0; n < count; n++) {
+		if (IS_ERR(waiters[n].tsk))
+			break;
+
+		set_bit(0, &waiters[n].flags);
+	}
+
+	igt_wake_all_sync(&ready, &set, &done, &wq, n);
+	wait_on_atomic_t(&done, wait_atomic, state);
+
+	for (n = 0; n < count; n++) {
+		if (IS_ERR(waiters[n].tsk))
+			break;
+
+		kthread_stop(waiters[n].tsk);
+		put_task_struct(waiters[n].tsk);
+	}
+
+	drm_free_large(waiters);
+out_engines:
+	mock_engine_flush(engine);
+	return err;
+}
+
 int intel_breadcrumbs_mock_selftests(void)
 {
 	static const struct i915_subtest tests[] = {
 		SUBTEST(igt_random_insert_remove),
 		SUBTEST(igt_insert_complete),
+		SUBTEST(igt_wakeup),
 	};
 	struct intel_engine_cs *engine;
 	int err;
