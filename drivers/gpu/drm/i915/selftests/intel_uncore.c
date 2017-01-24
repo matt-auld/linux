@@ -107,6 +107,50 @@ int intel_uncore_mock_selftests(void)
 	return 0;
 }
 
+static int intel_uncore_check_forcewake_domains(struct drm_i915_private *dev_priv)
+{
+#define FW_RANGE 0x40000
+	unsigned long *valid;
+	u32 offset;
+	int err;
+
+	valid = kzalloc(BITS_TO_LONGS(FW_RANGE) * sizeof(*valid),
+			GFP_TEMPORARY);
+	if (!valid)
+		return -ENOMEM;
+
+	intel_uncore_forcewake_get(dev_priv, FORCEWAKE_ALL);
+
+	check_for_unclaimed_mmio(dev_priv);
+	for (offset = 0; offset < FW_RANGE; offset += 4) {
+		i915_reg_t reg = { offset };
+
+		(void)I915_READ_FW(reg);
+		if (!check_for_unclaimed_mmio(dev_priv))
+			set_bit(offset, valid);
+	}
+
+	intel_uncore_forcewake_put(dev_priv, FORCEWAKE_ALL);
+
+	err = 0;
+	for_each_set_bit(offset, valid, FW_RANGE) {
+		i915_reg_t reg = { offset };
+
+		intel_uncore_forcewake_reset(dev_priv, false);
+		check_for_unclaimed_mmio(dev_priv);
+
+		(void)I915_READ(reg);
+		if (check_for_unclaimed_mmio(dev_priv)) {
+			pr_err("Unclaimed mmio read to register 0x%04x\n",
+			       offset);
+			err = -EINVAL;
+		}
+	}
+
+	kfree(valid);
+	return err;
+}
+
 int intel_uncore_live_selftests(struct drm_i915_private *i915)
 {
 	int err;
@@ -115,6 +159,10 @@ int intel_uncore_live_selftests(struct drm_i915_private *i915)
 	err = intel_fw_table_check(i915->uncore.fw_domains_table,
 				   i915->uncore.fw_domains_table_entries,
 				   INTEL_GEN(i915) >= 9);
+	if (err)
+		return err;
+
+	err = intel_uncore_check_forcewake_domains(i915);
 	if (err)
 		return err;
 
