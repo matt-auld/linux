@@ -1172,4 +1172,5 @@ int i915_gem_context_reset_stats_ioctl(struct drm_device *dev,
 
 #if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)
 #include "selftests/mock_context.c"
+#include "selftests/i915_gem_context.c"
 #endif
