@@ -835,7 +835,7 @@ i915_error_object_create(struct drm_i915_private *i915,
 		return NULL;
 	}
 
-	for_each_sgt_dma(dma, iter, vma->pages) {
+	for_each_sgt_dma(dma, iter, vma->pages, vma->obj->page_size) {
 		void __iomem *s;
 		int ret;
 
