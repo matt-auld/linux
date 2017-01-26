@@ -1033,7 +1033,7 @@ static void ironlake_rps_change_irq_handler(struct drm_i915_private *dev_priv)
 
 static void notify_ring(struct intel_engine_cs *engine)
 {
-	smp_store_mb(engine->breadcrumbs.irq_posted, true);
+	set_bit(ENGINE_IRQ_BREADCRUMB, &engine->irq_posted);
 	if (intel_engine_wakeup(engine))
 		trace_i915_gem_request_notify(engine);
 }
@@ -1349,8 +1349,11 @@ gen8_cs_irq_handler(struct intel_engine_cs *engine, u32 iir, int test_shift)
 {
 	if (iir & (GT_RENDER_USER_INTERRUPT << test_shift))
 		notify_ring(engine);
-	if (iir & (GT_CONTEXT_SWITCH_INTERRUPT << test_shift))
-		tasklet_schedule(&engine->irq_tasklet);
+
+	if (iir & (GT_CONTEXT_SWITCH_INTERRUPT << test_shift)) {
+		set_bit(ENGINE_IRQ_EXECLIST, &engine->irq_posted);
+		tasklet_hi_schedule(&engine->irq_tasklet);
+	}
 }
 
 static irqreturn_t gen8_gt_irq_ack(struct drm_i915_private *dev_priv,
