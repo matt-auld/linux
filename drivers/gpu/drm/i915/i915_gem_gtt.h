@@ -108,6 +108,7 @@ typedef uint64_t gen8_ppgtt_pml4e_t;
  * The difference as compared to normal x86 3 level page table is the PDPEs are
  * programmed via register.
  *
+ * GEN8 48b legacy style address with 4K or 64K page is defined as a 4 level
  * page table:
  * 47:39 | 38:30 | 29:21 | 20:12 |  11:0  |
  * PML4E | PDPE  |  PDE  |  PTE  | offset |
@@ -332,7 +333,9 @@ struct i915_address_space {
 	void (*insert_entries)(struct i915_address_space *vm,
 			       struct sg_table *st,
 			       uint64_t start,
-			       enum i915_cache_level cache_level, u32 flags);
+			       unsigned long page_size,
+			       enum i915_cache_level cache_level,
+			       u32 flags);
 	void (*cleanup)(struct i915_address_space *vm);
 	/** Unmap an object from an address space. This usually consists of
 	 * setting the valid PTE entries to a reserved scratch page. */
