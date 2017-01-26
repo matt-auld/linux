@@ -298,7 +298,7 @@ int intel_engine_create_scratch(struct intel_engine_cs *engine, int size)
 
 	WARN_ON(engine->scratch);
 
-	obj = i915_gem_object_create_stolen(engine->i915, size);
+	obj = i915_gem_object_create_stolen(engine->i915, size, I915_GTT_PAGE_SIZE);
 	if (!obj)
 		obj = i915_gem_object_create_internal(engine->i915, size);
 	if (IS_ERR(obj)) {
