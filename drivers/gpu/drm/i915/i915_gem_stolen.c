@@ -604,7 +604,8 @@ cleanup:
 }
 
 struct drm_i915_gem_object *
-i915_gem_object_create_stolen(struct drm_i915_private *dev_priv, u32 size)
+i915_gem_object_create_stolen(struct drm_i915_private *dev_priv, u32 size,
+			      unsigned long page_size)
 {
 	struct drm_i915_gem_object *obj;
 	struct drm_mm_node *stolen;
@@ -616,11 +617,15 @@ i915_gem_object_create_stolen(struct drm_i915_private *dev_priv, u32 size)
 	if (size == 0)
 		return NULL;
 
+	/* We need to add page_size padding to the object size */
+	size = roundup(size, page_size);
+
 	stolen = kzalloc(sizeof(*stolen), GFP_KERNEL);
 	if (!stolen)
 		return NULL;
 
-	ret = i915_gem_stolen_insert_node(dev_priv, stolen, size, 4096);
+	/* We also need to align the vm offset to the page_size boundry */
+	ret = i915_gem_stolen_insert_node(dev_priv, stolen, size, page_size);
 	if (ret) {
 		kfree(stolen);
 		return NULL;
@@ -629,6 +634,8 @@ i915_gem_object_create_stolen(struct drm_i915_private *dev_priv, u32 size)
 	obj = _i915_gem_object_create_stolen(dev_priv, stolen);
 	if (obj)
 		return obj;
+
+	obj->page_size = page_size;
 
 	i915_gem_stolen_remove_node(dev_priv, stolen);
 	kfree(stolen);

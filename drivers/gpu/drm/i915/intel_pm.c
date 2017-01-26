@@ -6109,7 +6109,7 @@ static void valleyview_setup_pctx(struct drm_i915_private *dev_priv)
 	 * overlap with other ranges, such as the frame buffer, protected
 	 * memory, or any other relevant ranges.
 	 */
-	pctx = i915_gem_object_create_stolen(dev_priv, pctx_size);
+	pctx = i915_gem_object_create_stolen(dev_priv, pctx_size, I915_GTT_PAGE_SIZE);
 	if (!pctx) {
 		DRM_DEBUG("not enough stolen space for PCTX, disabling\n");
 		goto out;
