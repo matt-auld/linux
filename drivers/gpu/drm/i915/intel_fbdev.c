@@ -140,7 +140,7 @@ static int intelfb_alloc(struct drm_fb_helper *helper,
 	 * features. */
 	obj = NULL;
 	if (size * 2 < ggtt->stolen_usable_size)
-		obj = i915_gem_object_create_stolen(dev_priv, size);
+		obj = i915_gem_object_create_stolen(dev_priv, size, I915_GTT_PAGE_SIZE);
 	if (obj == NULL)
 		obj = i915_gem_object_create(dev_priv, size);
 	if (IS_ERR(obj)) {
