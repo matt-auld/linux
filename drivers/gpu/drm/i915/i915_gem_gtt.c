@@ -1898,7 +1898,7 @@ static void gen6_ppgtt_insert_entries(struct i915_address_space *vm,
 	struct sgt_iter sgt_iter;
 	dma_addr_t addr;
 
-	for_each_sgt_dma(addr, sgt_iter, pages) {
+	for_each_sgt_dma(addr, sgt_iter, pages, page_size) {
 		if (pt_vaddr == NULL)
 			pt_vaddr = kmap_px(ppgtt->pd.page_table[act_pt]);
 
@@ -2421,7 +2421,7 @@ static void gen8_ggtt_insert_entries(struct i915_address_space *vm,
 
 	gtt_entries = (gen8_pte_t __iomem *)ggtt->gsm + (start >> PAGE_SHIFT);
 
-	for_each_sgt_dma(addr, sgt_iter, st) {
+	for_each_sgt_dma(addr, sgt_iter, st, I915_GTT_PAGE_SIZE) {
 		gtt_entry = gen8_pte_encode(addr, level);
 		gen8_set_pte(&gtt_entries[i++], gtt_entry);
 	}
@@ -2504,7 +2504,7 @@ static void gen6_ggtt_insert_entries(struct i915_address_space *vm,
 
 	gtt_entries = (gen6_pte_t __iomem *)ggtt->gsm + (start >> PAGE_SHIFT);
 
-	for_each_sgt_dma(addr, sgt_iter, st) {
+	for_each_sgt_dma(addr, sgt_iter, st, I915_GTT_PAGE_SIZE) {
 		gtt_entry = vm->pte_encode(addr, level, flags);
 		iowrite32(gtt_entry, &gtt_entries[i++]);
 	}
@@ -3429,7 +3429,7 @@ intel_rotate_fb_obj_pages(const struct intel_rotation_info *rot_info,
 
 	/* Populate source page list from the object. */
 	i = 0;
-	for_each_sgt_dma(dma_addr, sgt_iter, obj->mm.pages)
+	for_each_sgt_dma(dma_addr, sgt_iter, obj->mm.pages, obj->page_size)
 		page_addr_list[i++] = dma_addr;
 
 	GEM_BUG_ON(i != n_pages);

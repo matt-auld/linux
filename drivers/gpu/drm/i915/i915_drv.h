@@ -2588,14 +2588,15 @@ static inline struct scatterlist *__sg_next(struct scatterlist *sg)
 
 /**
  * for_each_sgt_dma - iterate over the DMA addresses of the given sg_table
- * @__dmap:	DMA address (output)
- * @__iter:	'struct sgt_iter' (iterator state, internal)
- * @__sgt:	sg_table to iterate over (input)
+ * @__dmap:	 DMA address (output)
+ * @__iter:	 'struct sgt_iter' (iterator state, internal)
+ * @__sgt:	 sg_table to iterate over (input)
+ * @__page_size: page_size increment (input)
  */
-#define for_each_sgt_dma(__dmap, __iter, __sgt)				\
+#define for_each_sgt_dma(__dmap, __iter, __sgt, __page_size)		\
 	for ((__iter) = __sgt_iter((__sgt)->sgl, true);			\
 	     ((__dmap) = (__iter).dma + (__iter).curr);			\
-	     (((__iter).curr += PAGE_SIZE) < (__iter).max) ||		\
+	     (((__iter).curr += (__page_size)) < (__iter).max) ||	\
 	     ((__iter) = __sgt_iter(__sg_next((__iter).sgp), true), 0))
 
 /**
