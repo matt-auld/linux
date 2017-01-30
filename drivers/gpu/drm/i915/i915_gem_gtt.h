@@ -328,6 +328,7 @@ struct i915_address_space {
 	void (*insert_entries)(struct i915_address_space *vm,
 			       struct sg_table *st,
 			       u64 start,
+			       unsigned long page_size,
 			       enum i915_cache_level cache_level,
 			       u32 flags);
 	void (*cleanup)(struct i915_address_space *vm);
