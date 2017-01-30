@@ -875,28 +875,29 @@ static void gen8_ppgtt_clear_range(struct i915_address_space *vm,
 static void
 gen8_ppgtt_insert_pte_entries(struct i915_address_space *vm,
 			      struct i915_page_directory_pointer *pdp,
-			      struct sg_page_iter *sg_iter,
+			      struct sg_table *pages,
 			      uint64_t start,
 			      enum i915_cache_level cache_level)
 {
 	struct i915_hw_ppgtt *ppgtt = i915_vm_to_ppgtt(vm);
 	gen8_pte_t *pt_vaddr;
+	struct sgt_iter sgt_iter;
+	dma_addr_t dma_addr;
 	unsigned pdpe = gen8_pdpe_index(start);
 	unsigned pde = gen8_pde_index(start);
 	unsigned pte = gen8_pte_index(start);
 
 	pt_vaddr = NULL;
 
-	while (__sg_page_iter_next(sg_iter)) {
+	for_each_sgt_dma(dma_addr, sgt_iter, pages, I915_GTT_PAGE_SIZE) {
 		if (pt_vaddr == NULL) {
 			struct i915_page_directory *pd = pdp->page_directory[pdpe];
 			struct i915_page_table *pt = pd->page_table[pde];
 			pt_vaddr = kmap_px(pt);
 		}
 
-		pt_vaddr[pte] =
-			gen8_pte_encode(sg_page_iter_dma_address(sg_iter),
-					cache_level);
+		pt_vaddr[pte] = gen8_pte_encode(dma_addr, cache_level);
+
 		if (++pte == GEN8_PTES) {
 			kunmap_px(ppgtt, pt_vaddr);
 			pt_vaddr = NULL;
@@ -920,12 +921,9 @@ static void gen8_ppgtt_insert_entries(struct i915_address_space *vm,
 				      u32 unused)
 {
 	struct i915_hw_ppgtt *ppgtt = i915_vm_to_ppgtt(vm);
-	struct sg_page_iter sg_iter;
-
-	__sg_page_iter_start(&sg_iter, pages->sgl, sg_nents(pages->sgl), 0);
 
 	if (!USES_FULL_48BIT_PPGTT(vm->i915)) {
-		gen8_ppgtt_insert_pte_entries(vm, &ppgtt->pdp, &sg_iter, start,
+		gen8_ppgtt_insert_pte_entries(vm, &ppgtt->pdp, pages, start,
 					      cache_level);
 	} else {
 		struct i915_page_directory_pointer *pdp;
@@ -933,7 +931,7 @@ static void gen8_ppgtt_insert_entries(struct i915_address_space *vm,
 		uint64_t length = (uint64_t)pages->orig_nents << PAGE_SHIFT;
 
 		gen8_for_each_pml4e(pdp, &ppgtt->pml4, start, length, pml4e) {
-			gen8_ppgtt_insert_pte_entries(vm, pdp, &sg_iter,
+			gen8_ppgtt_insert_pte_entries(vm, pdp, pages,
 						      start, cache_level);
 		}
 	}
@@ -1898,7 +1896,7 @@ static void gen6_ppgtt_insert_entries(struct i915_address_space *vm,
 	struct sgt_iter sgt_iter;
 	dma_addr_t addr;
 
-	for_each_sgt_dma(addr, sgt_iter, pages, page_size) {
+	for_each_sgt_dma(addr, sgt_iter, pages, I915_GTT_PAGE_SIZE) {
 		if (pt_vaddr == NULL)
 			pt_vaddr = kmap_px(ppgtt->pd.page_table[act_pt]);
 
