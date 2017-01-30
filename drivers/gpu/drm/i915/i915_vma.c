@@ -544,6 +544,7 @@ int __i915_vma_do_pin(struct i915_vma *vma,
 	lockdep_assert_held(&vma->vm->i915->drm.struct_mutex);
 	GEM_BUG_ON((flags & (PIN_GLOBAL | PIN_USER)) == 0);
 	GEM_BUG_ON((flags & PIN_GLOBAL) && !i915_vma_is_ggtt(vma));
+	GEM_BUG_ON(!is_valid_gtt_page_size(vma->obj->gtt_page_size));
 
 	if (WARN_ON(bound & I915_VMA_PIN_OVERFLOW)) {
 		ret = -EBUSY;
