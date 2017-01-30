@@ -242,7 +242,7 @@ static int lowlevel_hole(struct drm_i915_private *i915,
 				break;
 
 			vm->insert_entries(vm, obj->mm.pages, addr,
-					   I915_CACHE_NONE, 0);
+					   I915_GTT_PAGE_SIZE, I915_CACHE_NONE, 0);
 			if (igt_timeout(end_time,
 					"%s timed out after %d/%d\n",
 					__func__, n, count)) {
