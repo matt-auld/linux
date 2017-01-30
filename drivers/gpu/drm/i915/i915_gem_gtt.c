@@ -873,6 +873,37 @@ static void gen8_ppgtt_clear_range(struct i915_address_space *vm,
 }
 
 static void
+gen8_ppgtt_insert_pdpe_entries(struct i915_address_space *vm,
+			       struct i915_page_directory_pointer *pdp,
+			       struct sg_table *pages,
+			       uint64_t start,
+			       enum i915_cache_level cache_level)
+{
+	struct i915_hw_ppgtt *ppgtt = i915_vm_to_ppgtt(vm);
+	unsigned pdpe = gen8_pdpe_index(start);
+	gen8_pte_t *pdp_vaddr = NULL;
+	struct sgt_iter sgt_iter;
+	dma_addr_t dma_addr;
+
+	for_each_sgt_dma(dma_addr, sgt_iter, pages, I915_GTT_PAGE_SIZE_1G) {
+		if (pdp_vaddr == NULL)
+			pdp_vaddr = kmap_px(pdp);
+
+		pdp_vaddr[pdpe] =
+			gen8_pte_encode(dma_addr, cache_level) | GEN8_I915_GTT_PAGE_SIZE; 
+
+		if (++pdpe == I915_PDPES_PER_PDP(vm->i915)) {
+			kunmap_px(ppgtt, pdp_vaddr);
+			pdp_vaddr = NULL;
+			break;
+		}
+	}
+
+	if (pdp_vaddr)
+		kunmap_px(ppgtt, pdp_vaddr);
+}
+
+static void
 gen8_ppgtt_insert_pde_entries(struct i915_address_space *vm,
 				 struct i915_page_directory_pointer *pdp,
 				 struct sg_table *pages,
@@ -1033,6 +1064,11 @@ static void gen8_ppgtt_insert_entries(struct i915_address_space *vm,
 				gen8_ppgtt_insert_pde_entries(vm, pdp, pages,
 							      start,
 							      cache_level);
+				break;
+			case I915_GTT_PAGE_SIZE_1G:
+				gen8_ppgtt_insert_pdpe_entries(vm, pdp, pages,
+							       start,
+							       cache_level);
 				break;
 			default:
 				MISSING_CASE(page_size);

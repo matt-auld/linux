@@ -117,6 +117,11 @@ typedef uint64_t gen8_ppgtt_pml4e_t;
  * table:
  * 47:39 | 38:30 | 29:21 |     20:0       |
  * PML4E | PDPE  |  PDE  |    offset      |
+ *
+ * GEN8 48b legacy style address with 1G page is defined as a 2 level page
+ * table:
+ * 47:39 | 38:30 |         29:0           |
+ * PML4E | PDPE  |        offset          |
  */
 #define GEN8_PML4ES_PER_PML4		512
 #define GEN8_PML4E_SHIFT		39
