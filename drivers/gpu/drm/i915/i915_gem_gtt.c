@@ -196,7 +196,7 @@ static int ppgtt_bind_vma(struct i915_vma *vma,
 		pte_flags |= PTE_READ_ONLY;
 
 	vma->vm->insert_entries(vma->vm, vma->pages, vma->node.start,
-				cache_level, pte_flags);
+				I915_GTT_PAGE_SIZE, cache_level, pte_flags);
 
 	return 0;
 }
@@ -917,6 +917,7 @@ gen8_ppgtt_insert_pte_entries(struct i915_address_space *vm,
 static void gen8_ppgtt_insert_entries(struct i915_address_space *vm,
 				      struct sg_table *pages,
 				      uint64_t start,
+				      unsigned long page_size,
 				      enum i915_cache_level cache_level,
 				      u32 unused)
 {
@@ -931,8 +932,15 @@ static void gen8_ppgtt_insert_entries(struct i915_address_space *vm,
 		uint64_t length = (uint64_t)pages->orig_nents << PAGE_SHIFT;
 
 		gen8_for_each_pml4e(pdp, &ppgtt->pml4, start, length, pml4e) {
-			gen8_ppgtt_insert_pte_entries(vm, pdp, pages,
-						      start, cache_level);
+			switch (page_size) {
+			case I915_GTT_PAGE_SIZE:
+				gen8_ppgtt_insert_pte_entries(vm, pdp, pages,
+							      start,
+							      cache_level);
+				break;
+			default:
+				MISSING_CASE(page_size);
+			}
 		}
 	}
 }
@@ -1886,7 +1894,9 @@ static void gen6_ppgtt_clear_range(struct i915_address_space *vm,
 static void gen6_ppgtt_insert_entries(struct i915_address_space *vm,
 				      struct sg_table *pages,
 				      uint64_t start,
-				      enum i915_cache_level cache_level, u32 flags)
+				      unsigned long page_size,
+				      enum i915_cache_level cache_level,
+				      u32 flags)
 {
 	struct i915_hw_ppgtt *ppgtt = i915_vm_to_ppgtt(vm);
 	unsigned first_entry = start >> PAGE_SHIFT;
@@ -2408,6 +2418,7 @@ static void gen8_ggtt_insert_page(struct i915_address_space *vm,
 static void gen8_ggtt_insert_entries(struct i915_address_space *vm,
 				     struct sg_table *st,
 				     uint64_t start,
+				     unsigned long page_size,
 				     enum i915_cache_level level, u32 unused)
 {
 	struct i915_ggtt *ggtt = i915_vm_to_ggtt(vm);
@@ -2445,6 +2456,7 @@ struct insert_entries {
 	struct i915_address_space *vm;
 	struct sg_table *st;
 	uint64_t start;
+	unsigned long page_size;
 	enum i915_cache_level level;
 	u32 flags;
 };
@@ -2453,17 +2465,18 @@ static int gen8_ggtt_insert_entries__cb(void *_arg)
 {
 	struct insert_entries *arg = _arg;
 	gen8_ggtt_insert_entries(arg->vm, arg->st,
-				 arg->start, arg->level, arg->flags);
+				 arg->start, arg->page_size, arg->level, arg->flags);
 	return 0;
 }
 
 static void gen8_ggtt_insert_entries__BKL(struct i915_address_space *vm,
 					  struct sg_table *st,
 					  uint64_t start,
+					  unsigned long page_size,
 					  enum i915_cache_level level,
 					  u32 flags)
 {
-	struct insert_entries arg = { vm, st, start, level, flags };
+	struct insert_entries arg = { vm, st, start, page_size, level, flags };
 	stop_machine(gen8_ggtt_insert_entries__cb, &arg, NULL);
 }
 
@@ -2491,6 +2504,7 @@ static void gen6_ggtt_insert_page(struct i915_address_space *vm,
 static void gen6_ggtt_insert_entries(struct i915_address_space *vm,
 				     struct sg_table *st,
 				     uint64_t start,
+				     unsigned long page_size,
 				     enum i915_cache_level level, u32 flags)
 {
 	struct i915_ggtt *ggtt = i915_vm_to_ggtt(vm);
@@ -2591,6 +2605,7 @@ static void i915_ggtt_insert_page(struct i915_address_space *vm,
 static void i915_ggtt_insert_entries(struct i915_address_space *vm,
 				     struct sg_table *pages,
 				     uint64_t start,
+				     unsigned long page_size,
 				     enum i915_cache_level cache_level, u32 unused)
 {
 	unsigned int flags = (cache_level == I915_CACHE_NONE) ?
@@ -2626,7 +2641,7 @@ static int ggtt_bind_vma(struct i915_vma *vma,
 
 	intel_runtime_pm_get(i915);
 	vma->vm->insert_entries(vma->vm, vma->pages, vma->node.start,
-				cache_level, pte_flags);
+				I915_GTT_PAGE_SIZE, cache_level, pte_flags);
 	intel_runtime_pm_put(i915);
 
 	/*
@@ -2661,7 +2676,7 @@ static int aliasing_gtt_bind_vma(struct i915_vma *vma,
 		intel_runtime_pm_get(i915);
 		vma->vm->insert_entries(vma->vm,
 					vma->pages, vma->node.start,
-					cache_level, pte_flags);
+					I915_GTT_PAGE_SIZE, cache_level, pte_flags);
 		intel_runtime_pm_put(i915);
 	}
 
@@ -2669,7 +2684,7 @@ static int aliasing_gtt_bind_vma(struct i915_vma *vma,
 		struct i915_hw_ppgtt *appgtt = i915->mm.aliasing_ppgtt;
 		appgtt->base.insert_entries(&appgtt->base,
 					    vma->pages, vma->node.start,
-					    cache_level, pte_flags);
+					    I915_GTT_PAGE_SIZE, cache_level, pte_flags);
 	}
 
 	return 0;

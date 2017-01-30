@@ -337,6 +337,7 @@ static int drunk_hole(struct drm_i915_private *i915,
 
 			vm->insert_entries(vm, obj->mm.pages,
 					   order[n] * BIT_ULL(size),
+					   I915_GTT_PAGE_SIZE,
 					   I915_CACHE_NONE, 0);
 			if (igt_timeout(end_time,
 					"%s timed out after %d/%d\n",

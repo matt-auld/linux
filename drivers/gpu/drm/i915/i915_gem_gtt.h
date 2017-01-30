@@ -322,7 +322,9 @@ struct i915_address_space {
 	void (*insert_entries)(struct i915_address_space *vm,
 			       struct sg_table *st,
 			       uint64_t start,
-			       enum i915_cache_level cache_level, u32 flags);
+			       unsigned long page_size,
+			       enum i915_cache_level cache_level,
+			       u32 flags);
 	void (*cleanup)(struct i915_address_space *vm);
 	/** Unmap an object from an address space. This usually consists of
 	 * setting the valid PTE entries to a reserved scratch page. */
