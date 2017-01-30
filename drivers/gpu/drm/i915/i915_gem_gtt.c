@@ -873,6 +873,55 @@ static void gen8_ppgtt_clear_range(struct i915_address_space *vm,
 }
 
 static void
+gen8_ppgtt_insert_64K_pte_entries(struct i915_address_space *vm,
+			      struct i915_page_directory_pointer *pdp,
+			      struct sg_table *pages,
+			      uint64_t start,
+			      enum i915_cache_level cache_level)
+{
+	struct i915_hw_ppgtt *ppgtt = i915_vm_to_ppgtt(vm);
+	gen8_pte_t *pt_vaddr;
+	struct sgt_iter sgt_iter;
+	dma_addr_t dma_addr;
+	unsigned pdpe = gen8_pdpe_index(start);
+	unsigned pde = gen8_pde_index(start);
+	unsigned pte = gen8_pte_index(start);
+
+	pt_vaddr = NULL;
+
+	for_each_sgt_dma(dma_addr, sgt_iter, pages, I915_GTT_PAGE_SIZE_64K) {
+		if (pt_vaddr == NULL) {
+			struct i915_page_directory *pd = pdp->page_directory[pdpe];
+			struct i915_page_table *pt = pd->page_table[pde];
+			gen8_pte_t *pd_vaddr;
+
+			pd_vaddr = kmap_px(pd);
+			pd_vaddr[pde] |= GEN8_I915_GTT_PAGE_SIZE;
+			kunmap_px(ppgtt, pd_vaddr);
+
+			pt_vaddr = kmap_px(pt);
+		}
+
+		pt_vaddr[pte] = gen8_pte_encode(dma_addr, cache_level);
+		pte += 16;
+
+		if (pte == GEN8_PTES) {
+			kunmap_px(ppgtt, pt_vaddr);
+			pt_vaddr = NULL;
+			if (++pde == I915_PDES) {
+				if (++pdpe == I915_PDPES_PER_PDP(vm->i915))
+					break;
+				pde = 0;
+			}
+			pte = 0;
+		}
+	}
+
+	if (pt_vaddr)
+		kunmap_px(ppgtt, pt_vaddr);
+}
+
+static void
 gen8_ppgtt_insert_pte_entries(struct i915_address_space *vm,
 			      struct i915_page_directory_pointer *pdp,
 			      struct sg_table *pages,
@@ -937,6 +986,11 @@ static void gen8_ppgtt_insert_entries(struct i915_address_space *vm,
 				gen8_ppgtt_insert_pte_entries(vm, pdp, pages,
 							      start,
 							      cache_level);
+				break;
+			case I915_GTT_PAGE_SIZE_64K:
+				gen8_ppgtt_insert_64K_pte_entries(vm, pdp, pages,
+								  start,
+								  cache_level);
 				break;
 			default:
 				MISSING_CASE(page_size);

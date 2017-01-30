@@ -108,9 +108,10 @@ typedef uint64_t gen8_ppgtt_pml4e_t;
  * The difference as compared to normal x86 3 level page table is the PDPEs are
  * programmed via register.
  *
- * GEN8 48b legacy style address is defined as a 4 level page table:
- * 47:39 | 38:30 | 29:21 | 20:12 |  11:0
- * PML4E | PDPE  |  PDE  |  PTE  | offset
+ * GEN8 48b legacy style address with 4K or 64K page is defined as a 4 level
+ * page table:
+ * 47:39 | 38:30 | 29:21 | 20:12 |  11:0  |
+ * PML4E | PDPE  |  PDE  |  PTE  | offset |
  */
 #define GEN8_PML4ES_PER_PML4		512
 #define GEN8_PML4E_SHIFT		39
