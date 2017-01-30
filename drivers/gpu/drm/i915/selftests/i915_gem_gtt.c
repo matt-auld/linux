@@ -31,6 +31,7 @@
 #include "mock_context.h"
 #include "mock_drm.h"
 #include "mock_gem_device.h"
+#include "mock_gtt.h"
 
 static void fake_free_pages(struct drm_i915_gem_object *obj,
 			    struct sg_table *pages)
@@ -1307,6 +1308,72 @@ out:
 	return err;
 }
 
+static int igt_ppgtt_page_color(void *arg)
+{
+	struct drm_mm mm;
+	struct drm_mm_node *node, *prev, *next;
+	unsigned long page_colors[] = {
+		I915_GTT_PAGE_SIZE,
+		I915_GTT_PAGE_SIZE_64K,
+	};
+	int idx = 0;
+	u64 count = 0;
+	u64 size;
+
+	drm_mm_init(&mm, 0, U64_MAX);
+	mm.color_adjust = i915_page_color_adjust;
+
+	/* Running out of memory is okay. */
+
+	for_each_prime_number_from(size, 0, U64_MAX) {
+		node = kzalloc(sizeof(*node), GFP_KERNEL);
+		if (!node) {
+			pr_info("finished test early, unable to allocate node, count=%llu\n", count);
+			break;
+		}
+
+		size = round_up(size, page_colors[idx]);
+
+		if (drm_mm_insert_node_in_range(&mm, node, size,
+						page_colors[idx],
+						page_colors[idx],
+						0, U64_MAX,
+						DRM_MM_INSERT_BEST)) {
+			pr_info("test finished, unable to insert node: color=%lu, size=%llx, count=%llu\n",
+				page_colors[idx], size, count);
+			kfree(node);
+			break;
+		}
+
+		GEM_BUG_ON(!IS_ALIGNED(node->start, node->color));
+		GEM_BUG_ON(!IS_ALIGNED(node->size, node->color));
+
+		/* We can't mix 4K and 64K pte's in the same pt. */
+
+		prev = list_prev_entry(node, node_list);
+		if (i915_node_color_differs(prev, node->color))
+			GEM_BUG_ON(prev->start >> GEN8_PDE_SHIFT ==
+				   node->start >> GEN8_PDE_SHIFT);
+
+		next = list_next_entry(node, node_list);
+		if (i915_node_color_differs(next, node->color))
+			GEM_BUG_ON(((next->start + next->size) >> GEN8_PDE_SHIFT) ==
+				   ((node->start + node->size) >> GEN8_PDE_SHIFT));
+
+		idx ^= 1;
+		++count;
+	}
+
+	drm_mm_for_each_node_safe(node, next, &mm) {
+		drm_mm_remove_node(node);
+		kfree(node);
+	}
+
+	drm_mm_takedown(&mm);
+
+	return 0;
+}
+
 static int igt_gtt_insert(void *arg)
 {
 	struct drm_i915_private *i915 = arg;
@@ -1523,6 +1590,7 @@ int i915_gem_gtt_mock_selftests(void)
 		SUBTEST(igt_mock_fill),
 		SUBTEST(igt_gtt_reserve),
 		SUBTEST(igt_gtt_insert),
+		SUBTEST(igt_ppgtt_page_color),
 	};
 	struct drm_i915_private *i915;
 	int err;
