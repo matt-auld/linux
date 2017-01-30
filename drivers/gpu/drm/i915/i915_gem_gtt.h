@@ -206,6 +206,8 @@ enum i915_cache_level;
 
 struct i915_vma;
 
+struct i915_page_sizes;
+
 struct i915_page_dma {
 	struct page *page;
 	union {
@@ -320,6 +322,7 @@ struct i915_address_space {
 	void (*insert_entries)(struct i915_address_space *vm,
 			       struct sg_table *st,
 			       u64 start,
+			       struct i915_page_sizes *page_sizes,
 			       enum i915_cache_level cache_level,
 			       u32 flags);
 	void (*cleanup)(struct i915_address_space *vm);

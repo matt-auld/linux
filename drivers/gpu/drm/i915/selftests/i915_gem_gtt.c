@@ -256,7 +256,8 @@ static int lowlevel_hole(struct drm_i915_private *i915,
 				break;
 
 			vm->insert_entries(vm, obj->mm.pages, addr,
-					   I915_CACHE_NONE, 0);
+					   &obj->mm.page_sizes, I915_CACHE_NONE,
+					   0);
 		}
 		count = n;
 
