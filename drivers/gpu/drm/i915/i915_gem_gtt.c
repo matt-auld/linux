@@ -1331,6 +1331,41 @@ unwind:
 	return -ENOMEM;
 }
 
+static void i915_page_color_adjust(const struct drm_mm_node *node,
+				   unsigned long color,
+				   u64 *start,
+				   u64 *end)
+{
+	GEM_BUG_ON(color & ~I915_GTT_PAGE_SIZE_MASK);
+
+	if (!(color & (I915_GTT_PAGE_SIZE_64K | I915_GTT_PAGE_SIZE)))
+		return;
+
+	/* 
+	 * When mixing 64K and 4K pages for the same address space, we need to
+	 * ensure we never mix the two for any given page table, otherwise we
+	 * may be in store for some explosive results due to marking 
+	 * the pde as being either 64K or 4K mode when it comes to setting up
+	 * the page tables. Therefore, for a hole to be suitable we must have
+	 * enough space left after rounding to the respective page table
+	 * boundries, if the hole is adjacent to neighboring nodes of a
+	 * different page color. Page sizes larger than 64K, notably 2M and 1G
+	 * will already have this alignment property, so the operation will be
+	 * a noop.
+	 */
+
+	GEM_BUG_ON(node->allocated && node->color & ~I915_GTT_PAGE_SIZE_MASK);
+
+	if (i915_color_differs(node, color))
+		*start = roundup(*start, 1 << GEN8_PDE_SHIFT);
+
+	node = list_next_entry(node, node_list);
+	if (i915_color_differs(node, color))
+		*end = rounddown(*end, 1 << GEN8_PDE_SHIFT);
+
+	GEM_BUG_ON(node->allocated && node->color & ~I915_GTT_PAGE_SIZE_MASK);
+}
+
 /*
  * GEN8 legacy ppgtt programming is accomplished through a max 4 PDP registers
  * with a net effect resembling a 2-level page table in normal x86 terms. Each
@@ -1371,6 +1406,9 @@ static int gen8_ppgtt_init(struct i915_hw_ppgtt *ppgtt)
 		ppgtt->base.allocate_va_range = gen8_ppgtt_alloc_4lvl;
 		ppgtt->base.insert_entries = gen8_ppgtt_insert_4lvl;
 		ppgtt->base.clear_range = gen8_ppgtt_clear_4lvl;
+
+		if (INTEL_INFO(dev_priv)->page_size_mask & I915_GTT_PAGE_SIZE_64K)
+			ppgtt->base.mm.color_adjust = i915_page_color_adjust;
 	} else {
 		ret = __pdp_init(&ppgtt->base, &ppgtt->pdp);
 		if (ret)
