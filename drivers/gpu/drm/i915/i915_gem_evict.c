@@ -271,7 +271,7 @@ int i915_gem_evict_for_node(struct i915_address_space *vm,
 	if (!(flags & PIN_NONBLOCK))
 		i915_gem_retire_requests(vm->i915);
 
-	check_color = vm->mm.color_adjust;
+	check_color = vm->mm.color_adjust && i915_is_ggtt(vm);
 	if (check_color) {
 		/* Expand search to cover neighbouring guard pages (or lack!) */
 		if (start)
