@@ -284,6 +284,12 @@ static inline void i915_vma_unpin(struct i915_vma *vma)
 	__i915_vma_unpin(vma);
 }
 
+static inline bool i915_node_color_differs(const struct drm_mm_node *node,
+					   unsigned long color)
+{
+	return node->allocated && node->color != color;
+}
+
 /**
  * i915_vma_pin_iomap - calls ioremap_wc to map the GGTT VMA via the aperture
  * @vma: VMA to iomap
