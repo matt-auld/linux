@@ -1036,6 +1036,8 @@ static void gen8_ppgtt_insert_3lvl(struct i915_address_space *vm,
 		.max = iter.dma + iter.sg->length,
 	};
 
+	GEM_BUG_ON(page_size != I915_GTT_PAGE_SIZE);
+
 	gen8_ppgtt_insert_pte_entries(ppgtt, &ppgtt->pdp, &iter,
 				      start, cache_level);
 }
