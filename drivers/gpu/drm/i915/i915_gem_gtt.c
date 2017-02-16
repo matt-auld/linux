@@ -816,6 +816,71 @@ struct sgt_dma {
 };
 
 static __always_inline bool
+gen8_ppgtt_insert_64K_pte_entries(struct i915_hw_ppgtt *ppgtt,
+				  struct i915_page_directory_pointer *pdp,
+				  struct sgt_dma *iter,
+				  u64 start,
+				  enum i915_cache_level cache_level)
+{
+	unsigned int pdpe = gen8_pdpe_index(start);
+	unsigned int pde = gen8_pde_index(start);
+	unsigned int pte = gen8_pte_index(start);
+	struct i915_page_directory *pd;
+	const gen8_pte_t pte_encode = gen8_pte_encode(0, cache_level);
+	gen8_pte_t *vaddr;
+	bool ret;
+
+	/* TODO: probably move this to the allocation phase.. */
+	pd = pdp->page_directory[pdpe];
+	vaddr = kmap_atomic_px(pd);
+	vaddr[pde] |= GEN8_PDE_IPS_64K;
+	kunmap_atomic(vaddr);
+
+	vaddr = kmap_atomic_px(pd->page_table[pde]);
+	do {
+		vaddr[pte] = pte_encode | iter->dma;
+		iter->dma += I915_GTT_PAGE_SIZE_64K;
+		if (iter->dma >= iter->max) {
+			iter->sg = __sg_next(iter->sg);
+			if (!iter->sg) {
+				ret = false;
+				break;
+			}
+
+			iter->dma = sg_dma_address(iter->sg);
+			iter->max = iter->dma + iter->sg->length;
+		}
+
+		pte += 16;
+
+		if (pte == GEN8_PTES) {
+			if (++pde == I915_PDES) {
+				/* Limited by sg length for 3lvl */
+				if (++pdpe == GEN8_PML4ES_PER_PML4) {
+					ret = true;
+					break;
+				}
+
+				GEM_BUG_ON(pdpe > GEN8_LEGACY_PDPES);
+				pd = pdp->page_directory[pdpe];
+				pde = 0;
+			}
+
+			kunmap_atomic(vaddr);
+			vaddr = kmap_atomic_px(pd);
+			vaddr[pde] |= GEN8_PDE_IPS_64K;
+			kunmap_atomic(vaddr);
+
+			vaddr = kmap_atomic_px(pd->page_table[pde]);
+			pte = 0;
+		}
+	} while (1);
+	kunmap_atomic(vaddr);
+
+	return ret;
+}
+
+static __always_inline bool
 gen8_ppgtt_insert_pte_entries(struct i915_hw_ppgtt *ppgtt,
 			      struct i915_page_directory_pointer *pdp,
 			      struct sgt_dma *iter,
@@ -912,6 +977,9 @@ static void gen8_ppgtt_insert_4lvl(struct i915_address_space *vm,
 	switch (page_size) {
 	case I915_GTT_PAGE_SIZE:
 		insert_entries = gen8_ppgtt_insert_pte_entries;
+		break;
+	case I915_GTT_PAGE_SIZE_64K:
+		insert_entries = gen8_ppgtt_insert_64K_pte_entries;
 		break;
 	default:
 		MISSING_CASE(page_size);
