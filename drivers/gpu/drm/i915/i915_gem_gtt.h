@@ -161,6 +161,8 @@ typedef u64 gen8_ppgtt_pml4e_t;
 #define GEN8_PDE_IPS_64K BIT(11)
 #define GEN8_PDE_PS_2M   BIT(7)
 
+#define GEN8_PDPE_PS_1G  BIT(7)
+
 struct sg_table;
 
 struct intel_rotation_info {
