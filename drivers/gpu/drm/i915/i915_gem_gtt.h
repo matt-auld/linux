@@ -43,6 +43,7 @@
 #include "i915_selftest.h"
 
 #define I915_GTT_PAGE_SIZE_4K BIT(12)
+#define I915_GTT_PAGE_SIZE_2M BIT(21)
 
 #define I915_GTT_PAGE_SIZE I915_GTT_PAGE_SIZE_4K
 
@@ -145,6 +146,8 @@ typedef u64 gen8_ppgtt_pml4e_t;
 #define GEN8_PPAT_UC			(0<<0)
 #define GEN8_PPAT_ELLC_OVERRIDE		(0<<2)
 #define GEN8_PPAT(i, x)			((u64)(x) << ((i) * 8))
+
+#define GEN8_PDE_PS_2M   BIT(7)
 
 struct sg_table;
 
