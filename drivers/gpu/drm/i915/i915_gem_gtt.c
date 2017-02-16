@@ -848,6 +848,73 @@ static __always_inline struct gen8_insert_pte gen8_insert_pte(u64 start)
 }
 
 static __always_inline bool
+gen8_ppgtt_insert_64K_pte_entries(struct i915_hw_ppgtt *ppgtt,
+				  struct i915_page_directory_pointer *pdp,
+				  struct sgt_dma *iter,
+				  struct gen8_insert_pte *idx,
+				  enum i915_cache_level cache_level)
+{
+	struct i915_page_directory *pd;
+	const gen8_pte_t pte_encode = gen8_pte_encode(0, cache_level);
+	gen8_pte_t *vaddr;
+	bool ret;
+
+	GEM_BUG_ON(idx->pte % 16);
+	GEM_BUG_ON(idx->pdpe >= i915_pdpes_per_pdp(&ppgtt->base));
+	/* TODO: probably move this to the allocation phase.. */
+	pd = pdp->page_directory[idx->pdpe];
+	vaddr = kmap_atomic_px(pd);
+	vaddr[idx->pde] |= GEN8_PDE_IPS_64K;
+	kunmap_atomic(vaddr);
+
+	vaddr = kmap_atomic_px(pd->page_table[idx->pde]);
+	do {
+		vaddr[idx->pte] = pte_encode | iter->dma;
+		iter->dma += I915_GTT_PAGE_SIZE_64K;
+		if (iter->dma >= iter->max) {
+			iter->sg = __sg_next(iter->sg);
+			if (!iter->sg) {
+				ret = false;
+				break;
+			}
+
+			iter->dma = sg_dma_address(iter->sg);
+			iter->max = iter->dma + iter->sg->length;
+		}
+
+		idx->pte += 16;
+
+		if (idx->pte == GEN8_PTES) {
+			idx->pte = 0;
+
+			if (++idx->pde == I915_PDES) {
+				idx->pde = 0;
+
+				/* Limited by sg length for 3lvl */
+				if (++idx->pdpe == GEN8_PML4ES_PER_PML4) {
+					idx->pdpe = 0;
+					ret = true;
+					break;
+				}
+
+				GEM_BUG_ON(idx->pdpe >= i915_pdpes_per_pdp(&ppgtt->base));
+				pd = pdp->page_directory[idx->pdpe];
+			}
+
+			kunmap_atomic(vaddr);
+			vaddr = kmap_atomic_px(pd);
+			vaddr[idx->pde] |= GEN8_PDE_IPS_64K;
+			kunmap_atomic(vaddr);
+
+			vaddr = kmap_atomic_px(pd->page_table[idx->pde]);
+		}
+	} while (1);
+	kunmap_atomic(vaddr);
+
+	return ret;
+}
+
+static __always_inline bool
 gen8_ppgtt_insert_pte_entries(struct i915_hw_ppgtt *ppgtt,
 			      struct i915_page_directory_pointer *pdp,
 			      struct sgt_dma *iter,
@@ -947,6 +1014,9 @@ static void gen8_ppgtt_insert_4lvl(struct i915_address_space *vm,
 	switch (page_size) {
 	case I915_GTT_PAGE_SIZE_4K:
 		insert_entries = gen8_ppgtt_insert_pte_entries;
+		break;
+	case I915_GTT_PAGE_SIZE_64K:
+		insert_entries = gen8_ppgtt_insert_64K_pte_entries;
 		break;
 	default:
 		MISSING_CASE(page_size);
