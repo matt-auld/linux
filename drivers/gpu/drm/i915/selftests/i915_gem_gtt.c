@@ -92,12 +92,14 @@ static const struct drm_i915_gem_object_ops fake_ops = {
 };
 
 static struct drm_i915_gem_object *
-fake_dma_object(struct drm_i915_private *i915, u64 size)
+fake_dma_object(struct drm_i915_private *i915, u64 size, unsigned int page_size)
 {
 	struct drm_i915_gem_object *obj;
 
 	GEM_BUG_ON(!size);
-	GEM_BUG_ON(!IS_ALIGNED(size, I915_GTT_PAGE_SIZE));
+	GEM_BUG_ON(!is_valid_gtt_page_size(page_size));
+
+	size = round_up(size, page_size);
 
 	if (overflows_type(size, obj->base.size))
 		return ERR_PTR(-E2BIG);
@@ -107,7 +109,12 @@ fake_dma_object(struct drm_i915_private *i915, u64 size)
 		goto err;
 
 	drm_gem_private_object_init(&i915->drm, &obj->base, size);
+
 	i915_gem_object_init(obj, &fake_ops);
+
+	obj->gtt_page_size = obj->page_size = page_size;
+
+	GEM_BUG_ON(!IS_ALIGNED(obj->base.size, obj->page_size));
 
 	obj->base.write_domain = I915_GEM_DOMAIN_CPU;
 	obj->base.read_domains = I915_GEM_DOMAIN_CPU;
@@ -194,13 +201,14 @@ err_ppgtt:
 static int lowlevel_hole(struct drm_i915_private *i915,
 			 struct i915_address_space *vm,
 			 u64 hole_start, u64 hole_end,
+			 unsigned int page_size,
 			 unsigned long end_time)
 {
 	I915_RND_STATE(seed_prng);
 	unsigned int size;
 
 	/* Keep creating larger objects until one cannot fit into the hole */
-	for (size = 12; (hole_end - hole_start) >> size; size++) {
+	for (size = ilog2(page_size); (hole_end - hole_start) >> size; size++) {
 		I915_RND_SUBSTATE(prng, seed_prng);
 		struct drm_i915_gem_object *obj;
 		unsigned int *order, count, n;
@@ -226,7 +234,7 @@ static int lowlevel_hole(struct drm_i915_private *i915,
 		 * memory. We expect to hit -ENOMEM.
 		 */
 
-		obj = fake_dma_object(i915, BIT_ULL(size));
+		obj = fake_dma_object(i915, BIT_ULL(size), page_size);
 		if (IS_ERR(obj)) {
 			kfree(order);
 			break;
@@ -303,17 +311,24 @@ static void close_object_list(struct list_head *objects,
 static int fill_hole(struct drm_i915_private *i915,
 		     struct i915_address_space *vm,
 		     u64 hole_start, u64 hole_end,
+		     unsigned int page_size,
 		     unsigned long end_time)
 {
 	const u64 hole_size = hole_end - hole_start;
 	struct drm_i915_gem_object *obj;
-	const unsigned long max_pages =
-		min_t(u64, ULONG_MAX - 1, hole_size/2 >> PAGE_SHIFT);
-	const unsigned long max_step = max(int_sqrt(max_pages), 2UL);
-	unsigned long npages, prime, flags;
+	const unsigned page_shift = ilog2(page_size);
+	unsigned long max_pages, max_step, npages, prime, flags;
 	struct i915_vma *vma;
 	LIST_HEAD(objects);
 	int err;
+
+	hole_start = round_up(hole_start, page_size);
+	hole_end = round_down(hole_end, page_size);
+
+	GEM_BUG_ON(hole_start >= hole_end);
+
+	max_pages = min_t(u64, ULONG_MAX - 1, hole_size/2 >> page_shift);
+	max_step = max(int_sqrt(max_pages), 2UL);
 
 	/* Try binding many VMA working inwards from either edge */
 
@@ -323,7 +338,7 @@ static int fill_hole(struct drm_i915_private *i915,
 
 	for_each_prime_number_from(prime, 2, max_step) {
 		for (npages = 1; npages <= max_pages; npages *= prime) {
-			const u64 full_size = npages << PAGE_SHIFT;
+			const u64 full_size = npages << page_shift;
 			const struct {
 				const char *name;
 				u64 offset;
@@ -334,7 +349,7 @@ static int fill_hole(struct drm_i915_private *i915,
 				{ }
 			}, *p;
 
-			obj = fake_dma_object(i915, full_size);
+			obj = fake_dma_object(i915, full_size, page_size);
 			if (IS_ERR(obj))
 				break;
 
@@ -359,7 +374,7 @@ static int fill_hole(struct drm_i915_private *i915,
 						offset -= obj->base.size;
 					}
 
-					err = i915_vma_pin(vma, 0, 0, offset | flags);
+					err = i915_vma_pin(vma, 0, page_size, offset | flags);
 					if (err) {
 						pr_err("%s(%s) pin (forward) failed with err=%d on size=%lu pages (prime=%lu), offset=%llx\n",
 						       __func__, p->name, err, npages, prime, offset);
@@ -367,7 +382,7 @@ static int fill_hole(struct drm_i915_private *i915,
 					}
 
 					if (!drm_mm_node_allocated(&vma->node) ||
-					    i915_vma_misplaced(vma, 0, 0, offset | flags)) {
+					    i915_vma_misplaced(vma, 0, page_size, offset | flags)) {
 						pr_err("%s(%s) (forward) insert failed: vma.node=%llx + %llx [allocated? %d], expected offset %llx\n",
 						       __func__, p->name, vma->node.start, vma->node.size, drm_mm_node_allocated(&vma->node),
 						       offset);
@@ -397,7 +412,7 @@ static int fill_hole(struct drm_i915_private *i915,
 					}
 
 					if (!drm_mm_node_allocated(&vma->node) ||
-					    i915_vma_misplaced(vma, 0, 0, offset | flags)) {
+					    i915_vma_misplaced(vma, 0, page_size, offset | flags)) {
 						pr_err("%s(%s) (forward) moved vma.node=%llx + %llx, expected offset %llx\n",
 						       __func__, p->name, vma->node.start, vma->node.size,
 						       offset);
@@ -432,7 +447,7 @@ static int fill_hole(struct drm_i915_private *i915,
 						offset -= obj->base.size;
 					}
 
-					err = i915_vma_pin(vma, 0, 0, offset | flags);
+					err = i915_vma_pin(vma, 0, page_size, offset | flags);
 					if (err) {
 						pr_err("%s(%s) pin (backward) failed with err=%d on size=%lu pages (prime=%lu), offset=%llx\n",
 						       __func__, p->name, err, npages, prime, offset);
@@ -440,7 +455,7 @@ static int fill_hole(struct drm_i915_private *i915,
 					}
 
 					if (!drm_mm_node_allocated(&vma->node) ||
-					    i915_vma_misplaced(vma, 0, 0, offset | flags)) {
+					    i915_vma_misplaced(vma, 0, page_size, offset | flags)) {
 						pr_err("%s(%s) (backward) insert failed: vma.node=%llx + %llx [allocated? %d], expected offset %llx\n",
 						       __func__, p->name, vma->node.start, vma->node.size, drm_mm_node_allocated(&vma->node),
 						       offset);
@@ -470,7 +485,7 @@ static int fill_hole(struct drm_i915_private *i915,
 					}
 
 					if (!drm_mm_node_allocated(&vma->node) ||
-					    i915_vma_misplaced(vma, 0, 0, offset | flags)) {
+					    i915_vma_misplaced(vma, 0, page_size, offset | flags)) {
 						pr_err("%s(%s) (backward) moved vma.node=%llx + %llx [allocated? %d], expected offset %llx\n",
 						       __func__, p->name, vma->node.start, vma->node.size, drm_mm_node_allocated(&vma->node),
 						       offset);
@@ -514,11 +529,13 @@ err:
 static int walk_hole(struct drm_i915_private *i915,
 		     struct i915_address_space *vm,
 		     u64 hole_start, u64 hole_end,
+		     unsigned int page_size,
 		     unsigned long end_time)
 {
 	const u64 hole_size = hole_end - hole_start;
+	const unsigned page_shift = ilog2(page_size);
 	const unsigned long max_pages =
-		min_t(u64, ULONG_MAX - 1, hole_size >> PAGE_SHIFT);
+		min_t(u64, ULONG_MAX - 1, hole_size >> page_shift);
 	unsigned long flags;
 	u64 size;
 
@@ -534,7 +551,7 @@ static int walk_hole(struct drm_i915_private *i915,
 		u64 addr;
 		int err = 0;
 
-		obj = fake_dma_object(i915, size << PAGE_SHIFT);
+		obj = fake_dma_object(i915, size << page_shift, page_size);
 		if (IS_ERR(obj))
 			break;
 
@@ -547,7 +564,7 @@ static int walk_hole(struct drm_i915_private *i915,
 		for (addr = hole_start;
 		     addr + obj->base.size < hole_end;
 		     addr += obj->base.size) {
-			err = i915_vma_pin(vma, 0, 0, addr | flags);
+			err = i915_vma_pin(vma, 0, page_size, addr | flags);
 			if (err) {
 				pr_err("%s bind failed at %llx + %llx [hole %llx- %llx] with err=%d\n",
 				       __func__, addr, vma->size,
@@ -557,7 +574,7 @@ static int walk_hole(struct drm_i915_private *i915,
 			i915_vma_unpin(vma);
 
 			if (!drm_mm_node_allocated(&vma->node) ||
-			    i915_vma_misplaced(vma, 0, 0, addr | flags)) {
+			    i915_vma_misplaced(vma, 0, page_size, addr | flags)) {
 				pr_err("%s incorrect at %llx + %llx\n",
 				       __func__, addr, vma->size);
 				err = -EINVAL;
@@ -596,6 +613,7 @@ err_put:
 static int pot_hole(struct drm_i915_private *i915,
 		    struct i915_address_space *vm,
 		    u64 hole_start, u64 hole_end,
+		    unsigned int page_size,
 		    unsigned long end_time)
 {
 	struct drm_i915_gem_object *obj;
@@ -608,7 +626,7 @@ static int pot_hole(struct drm_i915_private *i915,
 	if (i915_is_ggtt(vm))
 		flags |= PIN_GLOBAL;
 
-	obj = i915_gem_object_create_internal(i915, 2 * I915_GTT_PAGE_SIZE);
+	obj = fake_dma_object(i915, 2 * page_size, page_size);
 	if (IS_ERR(obj))
 		return PTR_ERR(obj);
 
@@ -620,15 +638,15 @@ static int pot_hole(struct drm_i915_private *i915,
 
 	/* Insert a pair of pages across every pot boundary within the hole */
 	for (pot = fls64(hole_end - 1) - 1;
-	     pot > ilog2(2 * I915_GTT_PAGE_SIZE);
+	     pot > ilog2(2 * page_size);
 	     pot--) {
 		u64 step = BIT_ULL(pot);
 		u64 addr;
 
-		for (addr = round_up(hole_start + I915_GTT_PAGE_SIZE, step) - I915_GTT_PAGE_SIZE;
-		     addr <= round_down(hole_end - 2*I915_GTT_PAGE_SIZE, step) - I915_GTT_PAGE_SIZE;
+		for (addr = round_up(hole_start + page_size, step) - page_size;
+		     addr <= round_down(hole_end - 2*page_size, step) - page_size;
 		     addr += step) {
-			err = i915_vma_pin(vma, 0, 0, addr | flags);
+			err = i915_vma_pin(vma, 0, page_size, addr | flags);
 			if (err) {
 				pr_err("%s failed to pin object at %llx in hole [%llx - %llx], with err=%d\n",
 				       __func__,
@@ -672,6 +690,7 @@ err_obj:
 static int drunk_hole(struct drm_i915_private *i915,
 		      struct i915_address_space *vm,
 		      u64 hole_start, u64 hole_end,
+		      unsigned int page_size,
 		      unsigned long end_time)
 {
 	I915_RND_STATE(prng);
@@ -683,7 +702,7 @@ static int drunk_hole(struct drm_i915_private *i915,
 		flags |= PIN_GLOBAL;
 
 	/* Keep creating larger objects until one cannot fit into the hole */
-	for (size = 12; (hole_end - hole_start) >> size; size++) {
+	for (size = ilog2(page_size); (hole_end - hole_start) >> size; size++) {
 		struct drm_i915_gem_object *obj;
 		unsigned int *order, count, n;
 		struct i915_vma *vma;
@@ -707,7 +726,7 @@ static int drunk_hole(struct drm_i915_private *i915,
 		 * memory. We expect to hit -ENOMEM.
 		 */
 
-		obj = fake_dma_object(i915, BIT_ULL(size));
+		obj = fake_dma_object(i915, BIT_ULL(size), page_size);
 		if (IS_ERR(obj)) {
 			kfree(order);
 			break;
@@ -724,6 +743,8 @@ static int drunk_hole(struct drm_i915_private *i915,
 		for (n = 0; n < count; n++) {
 			u64 addr = hole_start + order[n] * BIT_ULL(size);
 
+			GEM_BUG_ON(!IS_ALIGNED(addr, page_size));
+
 			err = i915_vma_pin(vma, 0, 0, addr | flags);
 			if (err) {
 				pr_err("%s failed to pin object at %llx + %llx in hole [%llx - %llx], with err=%d\n",
@@ -735,7 +756,7 @@ static int drunk_hole(struct drm_i915_private *i915,
 			}
 
 			if (!drm_mm_node_allocated(&vma->node) ||
-			    i915_vma_misplaced(vma, 0, 0, addr | flags)) {
+			    i915_vma_misplaced(vma, 0, page_size, addr | flags)) {
 				pr_err("%s incorrect at %llx + %llx\n",
 				       __func__, addr, BIT_ULL(size));
 				i915_vma_unpin(vma);
@@ -772,11 +793,12 @@ err_obj:
 static int __shrink_hole(struct drm_i915_private *i915,
 			 struct i915_address_space *vm,
 			 u64 hole_start, u64 hole_end,
+			 unsigned int page_size,
 			 unsigned long end_time)
 {
 	struct drm_i915_gem_object *obj;
 	unsigned long flags = PIN_OFFSET_FIXED | PIN_USER;
-	unsigned int order = 12;
+	unsigned int order = ilog2(page_size);
 	LIST_HEAD(objects);
 	int err = 0;
 	u64 addr;
@@ -787,7 +809,7 @@ static int __shrink_hole(struct drm_i915_private *i915,
 		u64 size = BIT_ULL(order++);
 
 		size = min(size, hole_end - addr);
-		obj = fake_dma_object(i915, size);
+		obj = fake_dma_object(i915, size, page_size);
 		if (IS_ERR(obj)) {
 			err = PTR_ERR(obj);
 			break;
@@ -803,7 +825,7 @@ static int __shrink_hole(struct drm_i915_private *i915,
 
 		GEM_BUG_ON(vma->size != size);
 
-		err = i915_vma_pin(vma, 0, 0, addr | flags);
+		err = i915_vma_pin(vma, 0, page_size, addr | flags);
 		if (err) {
 			pr_err("%s failed to pin object at %llx + %llx in hole [%llx - %llx], with err=%d\n",
 			       __func__, addr, size, hole_start, hole_end, err);
@@ -811,7 +833,7 @@ static int __shrink_hole(struct drm_i915_private *i915,
 		}
 
 		if (!drm_mm_node_allocated(&vma->node) ||
-		    i915_vma_misplaced(vma, 0, 0, addr | flags)) {
+		    i915_vma_misplaced(vma, 0, page_size, addr | flags)) {
 			pr_err("%s incorrect at %llx + %llx\n",
 			       __func__, addr, size);
 			i915_vma_unpin(vma);
@@ -838,6 +860,7 @@ static int __shrink_hole(struct drm_i915_private *i915,
 static int shrink_hole(struct drm_i915_private *i915,
 		       struct i915_address_space *vm,
 		       u64 hole_start, u64 hole_end,
+		       unsigned int page_size,
 		       unsigned long end_time)
 {
 	unsigned long prime;
@@ -848,7 +871,8 @@ static int shrink_hole(struct drm_i915_private *i915,
 
 	for_each_prime_number_from(prime, 0, ULONG_MAX - 1) {
 		vm->fault_attr.interval = prime;
-		err = __shrink_hole(i915, vm, hole_start, hole_end, end_time);
+		err = __shrink_hole(i915, vm, hole_start, hole_end, page_size,
+				    end_time);
 		if (err)
 			break;
 	}
@@ -862,12 +886,20 @@ static int exercise_ppgtt(struct drm_i915_private *dev_priv,
 			  int (*func)(struct drm_i915_private *i915,
 				      struct i915_address_space *vm,
 				      u64 hole_start, u64 hole_end,
+				      unsigned int page_size,
 				      unsigned long end_time))
 {
 	struct drm_file *file;
 	struct i915_hw_ppgtt *ppgtt;
 	IGT_TIMEOUT(end_time);
-	int err;
+	unsigned int page_sizes[] = {
+		I915_GTT_PAGE_SIZE_4K,
+		I915_GTT_PAGE_SIZE_64K,
+		I915_GTT_PAGE_SIZE_2M,
+		I915_GTT_PAGE_SIZE_1G,
+	};
+	int err = 0;
+	int i;
 
 	if (!USES_FULL_PPGTT(dev_priv))
 		return 0;
@@ -885,7 +917,11 @@ static int exercise_ppgtt(struct drm_i915_private *dev_priv,
 	GEM_BUG_ON(offset_in_page(ppgtt->base.total));
 	GEM_BUG_ON(ppgtt->base.closed);
 
-	err = func(dev_priv, &ppgtt->base, 0, ppgtt->base.total, end_time);
+	for (i = 0; i < ARRAY_SIZE(page_sizes); ++i) {
+		if (SUPPORTS_PAGE_SIZE(dev_priv, page_sizes[i]))
+			err = func(dev_priv, &ppgtt->base, 0, ppgtt->base.total,
+				   page_sizes[i], end_time);
+	}
 
 	i915_ppgtt_close(&ppgtt->base);
 	i915_ppgtt_put(ppgtt);
@@ -941,6 +977,7 @@ static int exercise_ggtt(struct drm_i915_private *i915,
 			 int (*func)(struct drm_i915_private *i915,
 				     struct i915_address_space *vm,
 				     u64 hole_start, u64 hole_end,
+				     unsigned int page_size,
 				     unsigned long end_time))
 {
 	struct i915_ggtt *ggtt = &i915->ggtt;
@@ -962,7 +999,8 @@ restart:
 		if (hole_start >= hole_end)
 			continue;
 
-		err = func(i915, &ggtt->base, hole_start, hole_end, end_time);
+		err = func(i915, &ggtt->base, hole_start, hole_end,
+			   I915_GTT_PAGE_SIZE, end_time);
 		if (err)
 			break;
 
@@ -1105,12 +1143,20 @@ static int exercise_mock(struct drm_i915_private *i915,
 			 int (*func)(struct drm_i915_private *i915,
 				     struct i915_address_space *vm,
 				     u64 hole_start, u64 hole_end,
+				     unsigned int page_size,
 				     unsigned long end_time))
 {
 	struct i915_gem_context *ctx;
 	struct i915_hw_ppgtt *ppgtt;
 	IGT_TIMEOUT(end_time);
+	unsigned int page_sizes[] = {
+		I915_GTT_PAGE_SIZE_4K,
+		I915_GTT_PAGE_SIZE_64K,
+		I915_GTT_PAGE_SIZE_2M,
+		I915_GTT_PAGE_SIZE_1G,
+	};
 	int err;
+	int i;
 
 	ctx = mock_context(i915, "mock");
 	if (!ctx)
@@ -1119,7 +1165,10 @@ static int exercise_mock(struct drm_i915_private *i915,
 	ppgtt = ctx->ppgtt;
 	GEM_BUG_ON(!ppgtt);
 
-	err = func(i915, &ppgtt->base, 0, ppgtt->base.total, end_time);
+	for (i = 0; i < ARRAY_SIZE(page_sizes); ++i) {
+		err = func(i915, &ppgtt->base, 0, ppgtt->base.total,
+			   page_sizes[i], end_time);
+	}
 
 	mock_context_close(ctx);
 	return err;
