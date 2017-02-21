@@ -88,6 +88,9 @@ mock_ppgtt(struct drm_i915_private *i915,
 	ppgtt->base.unbind_vma = mock_unbind_ppgtt;
 	ppgtt->base.cleanup = mock_cleanup;
 
+	/* For mock testing huge-page support */
+	ppgtt->base.mm.color_adjust = i915_page_color_adjust;
+
 	return ppgtt;
 }
 
