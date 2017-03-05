@@ -353,6 +353,12 @@ i915_vm_has_cache_coloring(const struct i915_address_space *vm)
 }
 
 static inline bool
+i915_vm_has_page_coloring(const struct i915_address_space *vm)
+{
+	return vm->mm.color_adjust && !i915_is_ggtt(vm);
+}
+
+static inline bool
 i915_vm_is_48bit(const struct i915_address_space *vm)
 {
 	return (vm->total - 1) >> 32;
