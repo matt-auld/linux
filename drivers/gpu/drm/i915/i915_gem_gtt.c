@@ -1332,6 +1332,28 @@ unwind:
 	return -ENOMEM;
 }
 
+static void i915_page_color_adjust(const struct drm_mm_node *node,
+				   unsigned long color,
+				   u64 *start,
+				   u64 *end)
+{
+	GEM_BUG_ON(!is_valid_gtt_page_size(color));
+
+	if (!(color & (I915_GTT_PAGE_SIZE_4K | I915_GTT_PAGE_SIZE_64K)))
+		return;
+
+	GEM_BUG_ON(node->allocated && !is_valid_gtt_page_size(node->color));
+
+	if (i915_node_color_differs(node, color))
+		*start = roundup(*start, 1 << GEN8_PDE_SHIFT);
+
+	node = list_next_entry(node, node_list);
+	if (i915_node_color_differs(node, color))
+		*end = rounddown(*end, 1 << GEN8_PDE_SHIFT);
+
+	GEM_BUG_ON(node->allocated && !is_valid_gtt_page_size(node->color));
+}
+
 /*
  * GEN8 legacy ppgtt programming is accomplished through a max 4 PDP registers
  * with a net effect resembling a 2-level page table in normal x86 terms. Each
@@ -1372,6 +1394,9 @@ static int gen8_ppgtt_init(struct i915_hw_ppgtt *ppgtt)
 		ppgtt->base.allocate_va_range = gen8_ppgtt_alloc_4lvl;
 		ppgtt->base.insert_entries = gen8_ppgtt_insert_4lvl;
 		ppgtt->base.clear_range = gen8_ppgtt_clear_4lvl;
+
+		if (SUPPORTS_PAGE_SIZE(dev_priv, I915_GTT_PAGE_SIZE_64K))
+			ppgtt->base.mm.color_adjust = i915_page_color_adjust;
 	} else {
 		ret = __pdp_init(&ppgtt->base, &ppgtt->pdp);
 		if (ret)
