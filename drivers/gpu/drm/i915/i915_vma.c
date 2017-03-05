@@ -471,6 +471,8 @@ i915_vma_insert(struct i915_vma *vma, u64 size, u64 alignment, u64 flags)
 
 	if (i915_vm_has_cache_coloring(vma->vm))
 		color = obj->cache_level;
+	else if (i915_vm_has_page_coloring(vma->vm))
+		color = obj->gtt_page_size;
 
 	if (flags & PIN_OFFSET_FIXED) {
 		u64 offset = flags & PIN_OFFSET_MASK;
