@@ -2441,6 +2441,8 @@ static int ____i915_gem_object_get_pages(struct drm_i915_gem_object *obj)
 	struct sg_table *pages;
 
 	GEM_BUG_ON(i915_gem_object_has_pinned_pages(obj));
+	GEM_BUG_ON(!is_valid_gtt_page_size(obj->page_size));
+	GEM_BUG_ON(!is_valid_gtt_page_size(obj->gtt_page_size));
 
 	if (unlikely(obj->mm.madv != I915_MADV_WILLNEED)) {
 		DRM_DEBUG("Attempting to obtain a purgeable object\n");
@@ -4158,6 +4160,9 @@ void i915_gem_object_init(struct drm_i915_gem_object *obj,
 	INIT_LIST_HEAD(&obj->batch_pool_link);
 
 	obj->ops = ops;
+
+	obj->page_size = PAGE_SIZE;
+	obj->gtt_page_size = I915_GTT_PAGE_SIZE;
 
 	reservation_object_init(&obj->__builtin_resv);
 	obj->resv = &obj->__builtin_resv;

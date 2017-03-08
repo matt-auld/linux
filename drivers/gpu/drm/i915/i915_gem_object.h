@@ -107,6 +107,9 @@ struct drm_i915_gem_object {
 	unsigned int cache_level:3;
 	unsigned int cache_dirty:1;
 
+	unsigned int page_size; /* CPU pov - 4K(default), 2M, 1G */
+	unsigned int gtt_page_size; /* GPU pov - 4K(default), 64K, 2M, 1G */
+
 	atomic_t frontbuffer_bits;
 	unsigned int frontbuffer_ggtt_origin; /* write once */
 	struct i915_gem_active frontbuffer_write;
