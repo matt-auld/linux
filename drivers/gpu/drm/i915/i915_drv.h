@@ -919,6 +919,7 @@ struct intel_device_info {
 	enum intel_platform platform;
 	u8 ring_mask; /* Rings supported by the HW */
 	u8 num_rings;
+	unsigned int page_size_mask; /* page sizes supported by the HW */
 #define DEFINE_FLAG(name) u8 name:1
 	DEV_INFO_FOR_EACH_FLAG(DEFINE_FLAG);
 #undef DEFINE_FLAG
@@ -2894,6 +2895,11 @@ intel_info(const struct drm_i915_private *dev_priv)
 #define USES_PPGTT(dev_priv)		(i915.enable_ppgtt)
 #define USES_FULL_PPGTT(dev_priv)	(i915.enable_ppgtt >= 2)
 #define USES_FULL_48BIT_PPGTT(dev_priv)	(i915.enable_ppgtt == 3)
+#define SUPPORTS_PAGE_SIZE(dev_priv, page_size) \
+	(((dev_priv)->info.page_size_mask & (page_size))
+#define SUPPORTS_HUGE_PAGES(dev_priv) \
+	(((dev_priv)->info.page_size_mask & \
+	  (I915_GTT_PAGE_SIZE_MASK & ~I915_GTT_PAGE_SIZE_4K))
 
 #define HAS_OVERLAY(dev_priv)		 ((dev_priv)->info.has_overlay)
 #define OVERLAY_NEEDS_PHYSICAL(dev_priv) \
