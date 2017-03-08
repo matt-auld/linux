@@ -1065,7 +1065,7 @@ gen8_ppgtt_insert_pte_entries(struct i915_hw_ppgtt *ppgtt,
 static void gen8_ppgtt_insert_3lvl(struct i915_address_space *vm,
 				   struct sg_table *pages,
 				   u64 start,
-				   unsigned long page_size,
+				   unsigned int page_size,
 				   enum i915_cache_level cache_level,
 				   u32 unused)
 {
@@ -1084,7 +1084,7 @@ static void gen8_ppgtt_insert_3lvl(struct i915_address_space *vm,
 static void gen8_ppgtt_insert_4lvl(struct i915_address_space *vm,
 				   struct sg_table *pages,
 				   u64 start,
-				   unsigned long page_size,
+				   unsigned int page_size,
 				   enum i915_cache_level cache_level,
 				   u32 unused)
 {
@@ -1829,7 +1829,7 @@ static void gen6_ppgtt_clear_range(struct i915_address_space *vm,
 static void gen6_ppgtt_insert_entries(struct i915_address_space *vm,
 				      struct sg_table *pages,
 				      u64 start,
-				      unsigned long page_size,
+				      unsigned int page_size,
 				      enum i915_cache_level cache_level,
 				      u32 flags)
 {
@@ -2303,7 +2303,7 @@ static void gen8_ggtt_insert_page(struct i915_address_space *vm,
 static void gen8_ggtt_insert_entries(struct i915_address_space *vm,
 				     struct sg_table *st,
 				     u64 start,
-				     unsigned long page_size,
+				     unsigned int page_size,
 				     enum i915_cache_level level,
 				     u32 unused)
 {
@@ -2351,7 +2351,7 @@ static void gen6_ggtt_insert_page(struct i915_address_space *vm,
 static void gen6_ggtt_insert_entries(struct i915_address_space *vm,
 				     struct sg_table *st,
 				     u64 start,
-				     unsigned long page_size,
+				     unsigned int page_size,
 				     enum i915_cache_level level,
 				     u32 flags)
 {
@@ -2436,7 +2436,7 @@ static void i915_ggtt_insert_page(struct i915_address_space *vm,
 static void i915_ggtt_insert_entries(struct i915_address_space *vm,
 				     struct sg_table *pages,
 				     u64 start,
-				     unsigned long page_size,
+				     unsigned int page_size,
 				     enum i915_cache_level cache_level,
 				     u32 unused)
 {
