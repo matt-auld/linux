@@ -42,7 +42,22 @@
 #include "i915_gem_request.h"
 #include "i915_selftest.h"
 
-#define I915_GTT_PAGE_SIZE 4096UL
+#define I915_GTT_PAGE_SIZE_4K BIT(12)
+#define I915_GTT_PAGE_SIZE_64K BIT(16)
+#define I915_GTT_PAGE_SIZE_2M BIT(21)
+#define I915_GTT_PAGE_SIZE_1G BIT(30)
+
+#define I915_GTT_PAGE_SIZE I915_GTT_PAGE_SIZE_4K
+
+#define I915_GTT_PAGE_SIZE_MASK (I915_GTT_PAGE_SIZE_4K | \
+				 I915_GTT_PAGE_SIZE_64K | \
+				 I915_GTT_PAGE_SIZE_2M | \
+				 I915_GTT_PAGE_SIZE_1G)
+
+#define is_valid_gtt_page_size(page_size) \
+	(is_power_of_2(page_size) && \
+	 (page_size) & I915_GTT_PAGE_SIZE_MASK)
+
 #define I915_GTT_MIN_ALIGNMENT I915_GTT_PAGE_SIZE
 
 #define I915_FENCE_REG_NONE -1
