@@ -90,6 +90,8 @@ struct drm_i915_gem_object {
 
 	unsigned long flags;
 
+	unsigned long page_size; /* 4K(default), 64K, 2M, 1G */
+
 	/**
 	 * Have we taken a reference for the object for incomplete GPU
 	 * activity?
