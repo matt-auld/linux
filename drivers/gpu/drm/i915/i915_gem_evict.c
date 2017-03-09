@@ -277,6 +277,30 @@ int i915_gem_evict_for_node(struct i915_address_space *vm,
 
 		/* Always look at the page afterwards to avoid the end-of-GTT */
 		end += I915_GTT_PAGE_SIZE;
+	} else if (i915_vm_has_page_coloring(vm)) {
+		u64 pt_start, pt_end;
+
+		GEM_BUG_ON(!is_valid_gtt_page_size(target->color));
+		GEM_BUG_ON(!IS_ALIGNED(start, target->color));
+		GEM_BUG_ON(!IS_ALIGNED(end, target->color));
+
+		/* We need to consider the page table coloring on both sides of
+		 * the range, where a mismatch would require extending our
+		 * range to evict nodes up to the page table boundry for each
+		 * side to ensure the underlying page table(s) for the range
+		 * match the target color.
+		 */
+		pt_start = rounddown(start, 1 << GEN8_PDE_SHIFT);
+		node = __drm_mm_interval_first(&vm->mm, pt_start, start);
+		if (i915_node_color_differs(node, target->color)) {
+			start = pt_start;
+		}
+
+		pt_end = roundup(start, 1 << GEN8_PDE_SHIFT);
+		node = __drm_mm_interval_first(&vm->mm, end, pt_end);
+		if (i915_node_color_differs(node, target->color)) {
+			end = pt_end;
+		}
 	}
 	GEM_BUG_ON(start >= end);
 
