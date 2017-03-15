@@ -25,6 +25,7 @@
 #include "../i915_selftest.h"
 
 #include "mock_gem_device.h"
+#include "mock_gtt.h"
 
 static int populate_ggtt(struct drm_i915_private *i915)
 {
@@ -62,11 +63,11 @@ static int populate_ggtt(struct drm_i915_private *i915)
 	return 0;
 }
 
-static void unpin_ggtt(struct drm_i915_private *i915)
+static void unpin_vm(struct i915_address_space *vm)
 {
 	struct i915_vma *vma;
 
-	list_for_each_entry(vma, &i915->ggtt.base.inactive_list, vm_link)
+	list_for_each_entry(vma, &vm->inactive_list, vm_link)
 		i915_vma_unpin(vma);
 }
 
@@ -110,7 +111,7 @@ static int igt_evict_something(void *arg)
 		goto cleanup;
 	}
 
-	unpin_ggtt(i915);
+	unpin_vm(&ggtt->base);
 
 	/* Everything is unpinned, we should be able to evict something */
 	err = i915_gem_evict_something(&ggtt->base,
@@ -187,7 +188,7 @@ static int igt_evict_for_vma(void *arg)
 		goto cleanup;
 	}
 
-	unpin_ggtt(i915);
+	unpin_vm(&ggtt->base);
 
 	/* Everything is unpinned, we should be able to evict the node */
 	err = i915_gem_evict_for_node(&ggtt->base, &target, 0);
@@ -287,9 +288,112 @@ static int igt_evict_for_cache_color(void *arg)
 	err = 0;
 
 cleanup:
-	unpin_ggtt(i915);
+	unpin_vm(&ggtt->base);
 	cleanup_objects(i915);
 	ggtt->base.mm.color_adjust = NULL;
+	return err;
+}
+
+static int igt_evict_for_page_color(void *arg)
+{
+	struct drm_i915_private *i915 = arg;
+	struct i915_hw_ppgtt *ppgtt = mock_ppgtt(i915, "mock-page-color");
+	const unsigned long flags = PIN_USER | PIN_OFFSET_FIXED;
+	struct drm_mm_node target = {
+		/* Straddle the end of the first page-table boundary */
+		.start = (1 << GEN8_PDE_SHIFT) - I915_GTT_PAGE_SIZE_64K,
+		.size = I915_GTT_PAGE_SIZE_64K * 2,
+		.color = I915_GTT_PAGE_SIZE_4K,
+	};
+	struct drm_i915_gem_object *obj;
+	struct i915_vma *vma;
+	int err;
+
+	/* The mock ppgtt mm.color_adjust should be set to
+	 * i915_page_color_adjust.
+	 */
+	GEM_BUG_ON(!i915_vm_has_page_coloring(&ppgtt->base));
+
+	obj = i915_gem_object_create_internal(i915, I915_GTT_PAGE_SIZE);
+	if (IS_ERR(obj)) {
+		err = PTR_ERR(obj);
+		goto cleanup;
+	}
+
+	vma = i915_vma_instance(obj, &ppgtt->base, NULL);
+	if (IS_ERR(vma)) {
+		pr_err("[0]i915_vma_instance failed\n");
+		err = PTR_ERR(vma);
+		goto cleanup;
+	}
+
+	err = i915_vma_pin(vma, 0, 0, flags);
+	if (err) {
+		pr_err("[0]i915_vma_pin failed with err=%d\n", err);
+		goto cleanup;
+	}
+
+	obj = i915_gem_object_create_internal(i915, I915_GTT_PAGE_SIZE);
+	if (IS_ERR(obj)) {
+		unpin_vm(&ppgtt->base);
+		err = PTR_ERR(obj);
+		goto cleanup;
+	}
+
+	vma = i915_vma_instance(obj, &ppgtt->base, NULL);
+	if (IS_ERR(vma)) {
+		pr_err("[1]i915_vma_instance failed\n");
+		err = PTR_ERR(vma);
+		goto cleanup;
+	}
+
+	err = i915_vma_pin(vma, 0, 0,
+			   ((2 << GEN8_PDE_SHIFT) - I915_GTT_PAGE_SIZE_4K) |
+			   flags);
+	if (err) {
+		unpin_vm(&ppgtt->base);
+		pr_err("[1]i915_vma_pin failed with err=%d\n", err);
+		goto cleanup;
+	}
+
+	/* Target the page-table boundary between the two already *pinned* gem
+	 * objects with the same page color - should succeed.
+	 */
+	err = i915_gem_evict_for_node(&ppgtt->base, &target, 0);
+	if (err) {
+		unpin_vm(&ppgtt->base);
+		pr_err("[0]i915_gem_evict_for_node returned err=%d\n", err);
+		goto cleanup;
+	}
+
+	target.color = I915_GTT_PAGE_SIZE_64K;
+
+	/* Again target the page-table boundary between the two already *pinned*
+	 * gem objects, but this time with conflicting page colors - should
+	 * fail.
+	 */
+	err = i915_gem_evict_for_node(&ppgtt->base, &target, 0);
+	if (!err) {
+		unpin_vm(&ppgtt->base);
+		pr_err("[1]i915_gem_evict_for_node returned err=%d\n", err);
+		err = -EINVAL;
+		goto cleanup;
+	}
+
+	unpin_vm(&ppgtt->base);
+
+	/* And finaly target the page-table boundary between the two now
+	 * *unpinned* gem objects, again with conflicting page colors - should
+	 * now succeed.
+	 */
+	err = i915_gem_evict_for_node(&ppgtt->base, &target, 0);
+	if (err)
+		pr_err("[2]i915_gem_evict_for_node returned err=%d\n", err);
+
+cleanup:
+	i915_ppgtt_close(&ppgtt->base);
+	i915_ppgtt_put(ppgtt);
+	cleanup_objects(i915);
 	return err;
 }
 
@@ -313,7 +417,7 @@ static int igt_evict_vm(void *arg)
 		goto cleanup;
 	}
 
-	unpin_ggtt(i915);
+	unpin_vm(&ggtt->base);
 
 	err = i915_gem_evict_vm(&ggtt->base, false);
 	if (err) {
@@ -333,6 +437,7 @@ int i915_gem_evict_mock_selftests(void)
 		SUBTEST(igt_evict_something),
 		SUBTEST(igt_evict_for_vma),
 		SUBTEST(igt_evict_for_cache_color),
+		SUBTEST(igt_evict_for_page_color),
 		SUBTEST(igt_evict_vm),
 		SUBTEST(igt_overcommit),
 	};
