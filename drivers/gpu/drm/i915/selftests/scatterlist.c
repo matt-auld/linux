@@ -353,3 +353,5 @@ int scatterlist_mock_selftests(void)
 
 	return i915_subtests(tests, NULL);
 }
+
+#undef PFN_BIAS
