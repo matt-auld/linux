@@ -117,6 +117,26 @@ static u64 i915_gem_obj_total_ggtt_size(struct drm_i915_gem_object *obj)
 	return size;
 }
 
+static const char *stringify_page_sizes(unsigned int page_sizes)
+{
+	switch (page_sizes) {
+	case I915_GTT_PAGE_SIZE_4K:
+		return "4K";
+	case I915_GTT_PAGE_SIZE_64K:
+		return "64K";
+	case I915_GTT_PAGE_SIZE_2M:
+		return "2M";
+	case I915_GTT_PAGE_SIZE_1G:
+		return "1G";
+	default:
+		/* mixed-mode? */
+		if (page_sizes)
+			return "M";
+
+		return "";
+	}
+}
+
 static void
 describe_obj(struct seq_file *m, struct drm_i915_gem_object *obj)
 {
@@ -128,7 +148,7 @@ describe_obj(struct seq_file *m, struct drm_i915_gem_object *obj)
 
 	lockdep_assert_held(&obj->base.dev->struct_mutex);
 
-	seq_printf(m, "%pK: %c%c%c%c%c %8zdKiB %02x %02x %s%s%s",
+	seq_printf(m, "%pK: %c%c%c%c%c %8zdKiB %3s %02x %02x %s%s%s",
 		   &obj->base,
 		   get_active_flag(obj),
 		   get_pin_flag(obj),
@@ -136,6 +156,7 @@ describe_obj(struct seq_file *m, struct drm_i915_gem_object *obj)
 		   get_global_flag(obj),
 		   get_pin_mapped_flag(obj),
 		   obj->base.size / 1024,
+		   stringify_page_sizes(obj->mm.page_sizes.gtt),
 		   obj->base.read_domains,
 		   obj->base.write_domain,
 		   i915_cache_level_str(dev_priv, obj->cache_level),
@@ -399,8 +420,8 @@ static int i915_gem_object_info(struct seq_file *m, void *data)
 	struct drm_i915_private *dev_priv = node_to_i915(m->private);
 	struct drm_device *dev = &dev_priv->drm;
 	struct i915_ggtt *ggtt = &dev_priv->ggtt;
-	u32 count, mapped_count, purgeable_count, dpy_count;
-	u64 size, mapped_size, purgeable_size, dpy_size;
+	u32 count, mapped_count, purgeable_count, dpy_count, huge_count;
+	u64 size, mapped_size, purgeable_size, dpy_size, huge_size;
 	struct drm_i915_gem_object *obj;
 	struct drm_file *file;
 	int ret;
@@ -416,6 +437,7 @@ static int i915_gem_object_info(struct seq_file *m, void *data)
 	size = count = 0;
 	mapped_size = mapped_count = 0;
 	purgeable_size = purgeable_count = 0;
+	huge_size = huge_count = 0;
 	list_for_each_entry(obj, &dev_priv->mm.unbound_list, global_link) {
 		size += obj->base.size;
 		++count;
@@ -428,6 +450,11 @@ static int i915_gem_object_info(struct seq_file *m, void *data)
 		if (obj->mm.mapping) {
 			mapped_count++;
 			mapped_size += obj->base.size;
+		}
+
+		if (obj->mm.page_sizes.gtt > I915_GTT_PAGE_SIZE) {
+			huge_count++;
+			huge_size += obj->base.size;
 		}
 	}
 	seq_printf(m, "%u unbound objects, %llu bytes\n", count, size);
@@ -451,6 +478,11 @@ static int i915_gem_object_info(struct seq_file *m, void *data)
 			mapped_count++;
 			mapped_size += obj->base.size;
 		}
+
+		if (obj->mm.page_sizes.gtt > I915_GTT_PAGE_SIZE) {
+			huge_count++;
+			huge_size += obj->base.size;
+		}
 	}
 	seq_printf(m, "%u bound objects, %llu bytes\n",
 		   count, size);
@@ -458,6 +490,8 @@ static int i915_gem_object_info(struct seq_file *m, void *data)
 		   purgeable_count, purgeable_size);
 	seq_printf(m, "%u mapped objects, %llu bytes\n",
 		   mapped_count, mapped_size);
+	seq_printf(m, "%u huge-paged objects, %llu bytes\n",
+		   huge_count, huge_size);
 	seq_printf(m, "%u display objects (pinned), %llu bytes\n",
 		   dpy_count, dpy_size);
 
