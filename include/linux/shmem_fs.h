@@ -81,6 +81,7 @@ enum sgp_type {
 	SGP_CACHE,	/* don't exceed i_size, may allocate page */
 	SGP_NOHUGE,	/* like SGP_CACHE, but no huge pages */
 	SGP_HUGE,	/* like SGP_CACHE, huge pages preferred */
+	SGP_ONLYHUGE    /* like SGP_CACHE, huge pages only */
 	SGP_WRITE,	/* may exceed i_size, may allocate !Uptodate page */
 	SGP_FALLOC,	/* like SGP_WRITE, but make existing page Uptodate */
 };

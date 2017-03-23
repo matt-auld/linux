@@ -1562,7 +1562,7 @@ static int gen8_ppgtt_init(struct i915_hw_ppgtt *ppgtt)
 		ppgtt->base.insert_entries = gen8_ppgtt_insert_4lvl;
 		ppgtt->base.clear_range = gen8_ppgtt_clear_4lvl;
 
-		if (INTEL_INFO(dev_priv)->page_size_mask & I915_GTT_PAGE_SIZE_64K)
+		if (SUPPORTS_PAGE_SIZE(dev_priv, I915_GTT_PAGE_SIZE_64K))
 			ppgtt->base.mm.color_adjust = i915_page_color_adjust;
 	} else {
 		ret = __pdp_init(&ppgtt->base, &ppgtt->pdp);

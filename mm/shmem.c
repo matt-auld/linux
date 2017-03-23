@@ -1598,7 +1598,7 @@ static int shmem_getpage_gfp(struct inode *inode, pgoff_t index,
 
 	if (index > (MAX_LFS_FILESIZE >> PAGE_SHIFT))
 		return -EFBIG;
-	if (sgp == SGP_NOHUGE || sgp == SGP_HUGE)
+	if (sgp == SGP_NOHUGE || sgp == SGP_HUGE || sgp == SGP_ONLYHUGE)
 		sgp = SGP_CACHE;
 repeat:
 	swap.val = 0;
@@ -1723,6 +1723,8 @@ repeat:
 		/* shmem_symlink() */
 		if (mapping->a_ops != &shmem_aops)
 			goto alloc_nohuge;
+		if (sgp_huge == SGP_ONLYHUGE)
+			goto alloc_huge;
 		if (shmem_huge == SHMEM_HUGE_DENY || sgp_huge == SGP_NOHUGE)
 			goto alloc_nohuge;
 		if (shmem_huge == SHMEM_HUGE_FORCE)
@@ -1749,7 +1751,7 @@ repeat:
 alloc_huge:
 		page = shmem_alloc_and_acct_page(gfp, info, sbinfo,
 				index, true);
-		if (IS_ERR(page)) {
+		if (sgp_huge != SGP_ONLYHUGE && IS_ERR(page)) {
 alloc_nohuge:		page = shmem_alloc_and_acct_page(gfp, info, sbinfo,
 					index, false);
 		}

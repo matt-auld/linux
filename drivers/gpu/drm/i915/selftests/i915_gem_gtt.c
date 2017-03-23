@@ -819,7 +819,7 @@ static int exercise_ppgtt(struct drm_i915_private *dev_priv,
 	GEM_BUG_ON(ppgtt->base.closed);
 
 	for (i = 0; i < ARRAY_SIZE(page_sizes); ++i) {
-		if (INTEL_INFO(dev_priv)->page_size_mask & page_sizes[i])
+		if (SUPPORTS_PAGE_SIZE(dev_priv, page_sizes[i]))
 			err = func(dev_priv, &ppgtt->base, 0, ppgtt->base.total,
 				   page_sizes[i], end_time);
 	}

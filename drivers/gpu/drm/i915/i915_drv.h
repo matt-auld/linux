@@ -2639,8 +2639,9 @@ static __always_inline struct sgt_iter {
 		s.max += s.sgp->length;
 		if (dma)
 			s.dma = sg_dma_address(s.sgp);
-		else
+		else {
 			s.pfn = page_to_pfn(sg_page(s.sgp));
+		}
 	}
 
 	return s;
@@ -2693,7 +2694,7 @@ static inline struct scatterlist *__sg_next(struct scatterlist *sg)
 	for ((__iter) = __sgt_iter((__sgt)->sgl, false);		\
 	     ((__pp) = (__iter).pfn == 0 ? NULL :			\
 	      pfn_to_page((__iter).pfn + ((__iter).curr >> PAGE_SHIFT))); \
-	     (((__iter).curr += PAGE_SIZE) < (__iter).max) ||		\
+	     (((__iter).curr += PAGE_SIZE < (__iter).max) || \
 	     ((__iter) = __sgt_iter(__sg_next((__iter).sgp), false), 0))
 
 static inline const struct intel_device_info *
@@ -2895,6 +2896,9 @@ intel_info(const struct drm_i915_private *dev_priv)
 #define USES_FULL_48BIT_PPGTT(dev_priv)	(i915.enable_ppgtt == 3)
 #define SUPPORTS_PAGE_SIZE(dev_priv, page_size) \
 	(((dev_priv)->info.page_size_mask & (page_size))
+#define SUPPORTS_HUGE_PAGES(dev_priv) \
+	(((dev_priv)->info.page_size_mask & \
+	  (I915_GTT_PAGE_SIZE_MASK & ~I915_GTT_PAGE_SIZE_4K))
 
 #define HAS_OVERLAY(dev_priv)		 ((dev_priv)->info.has_overlay)
 #define OVERLAY_NEEDS_PHYSICAL(dev_priv) \
