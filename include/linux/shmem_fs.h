@@ -16,6 +16,7 @@ struct shmem_inode_info {
 	unsigned long		flags;
 	unsigned long		alloced;	/* data pages alloced to file */
 	unsigned long		swapped;	/* subtotal assigned to swap */
+	bool                    force_huge;
 	struct list_head        shrinklist;     /* shrinkable hpage inodes */
 	struct list_head	swaplist;	/* chain of maybes on swap */
 	struct shared_policy	policy;		/* NUMA memory alloc policy */
@@ -86,6 +87,8 @@ enum sgp_type {
 };
 
 extern int shmem_getpage(struct inode *inode, pgoff_t index,
+		struct page **pagep, gfp_t gfp_mask, enum sgp_type sgp);
+extern int shmem_getpage_gfp(struct inode *inode, pgoff_t index,
 		struct page **pagep, enum sgp_type sgp);
 
 static inline struct page *shmem_read_mapping_page(
