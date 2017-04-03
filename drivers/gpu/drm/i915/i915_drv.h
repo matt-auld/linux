@@ -2672,6 +2672,9 @@ static inline struct scatterlist *__sg_next(struct scatterlist *sg)
  * @__pp:	page pointer (output)
  * @__iter:	'struct sgt_iter' (iterator state, internal)
  * @__sgt:	sg_table to iterate over (input)
+ *
+ * Be warned, if we using huge-pages @_pp could be a part of a compound page,
+ * so care must be taken. Too thorny?
  */
 #define for_each_sgt_page(__pp, __iter, __sgt)				\
 	for ((__iter) = __sgt_iter((__sgt)->sgl, false);		\

@@ -469,6 +469,14 @@ i915_vma_insert(struct i915_vma *vma, u64 size, u64 alignment, u64 flags)
 	if (ret)
 		return ret;
 
+	/* We don't know the final gtt page size until *after* we pin the
+	 * backing store, or that's at least the case for the shmem backend.
+	 * Therefore re-adjust the alignment if needed. This is only relevant
+	 * for huge-pages being inserted into the ppgtt.
+	 */
+	if (!i915_is_ggtt(vma->vm) && alignment < obj->gtt_page_size)
+		alignment = obj->gtt_page_size;
+
 	if (i915_vm_has_cache_coloring(vma->vm))
 		color = obj->cache_level;
 	else if (i915_vm_has_page_coloring(vma->vm))

@@ -171,7 +171,7 @@ i915_gem_object_get_pages_phys(struct drm_i915_gem_object *obj)
 	struct sg_table *st;
 	struct scatterlist *sg;
 	char *vaddr;
-	int i;
+	int i, j;
 
 	if (WARN_ON(i915_gem_object_needs_bit17_swizzle(obj)))
 		return ERR_PTR(-EINVAL);
@@ -187,7 +187,7 @@ i915_gem_object_get_pages_phys(struct drm_i915_gem_object *obj)
 		return ERR_PTR(-ENOMEM);
 
 	vaddr = phys->vaddr;
-	for (i = 0; i < obj->base.size / PAGE_SIZE; i++) {
+	for (i = 0; i < obj->base.size / PAGE_SIZE; ) {
 		struct page *page;
 		char *src;
 
@@ -197,13 +197,15 @@ i915_gem_object_get_pages_phys(struct drm_i915_gem_object *obj)
 			goto err_phys;
 		}
 
-		src = kmap_atomic(page);
-		memcpy(vaddr, src, PAGE_SIZE);
-		drm_clflush_virt_range(vaddr, PAGE_SIZE);
-		kunmap_atomic(src);
+		for (j = 0; j < hpage_nr_pages(page); ++j, ++i) {
+			src = kmap_atomic(page + j);
+			memcpy(vaddr, src, PAGE_SIZE);
+			drm_clflush_virt_range(vaddr, PAGE_SIZE);
+			kunmap_atomic(src);
+			vaddr += PAGE_SIZE;
+		}
 
 		put_page(page);
-		vaddr += PAGE_SIZE;
 	}
 
 	i915_gem_chipset_flush(to_i915(obj->base.dev));
@@ -263,9 +265,9 @@ i915_gem_object_put_pages_phys(struct drm_i915_gem_object *obj,
 	if (obj->mm.dirty) {
 		struct address_space *mapping = obj->base.filp->f_mapping;
 		char *vaddr = obj->phys_handle->vaddr;
-		int i;
+		int i, j;
 
-		for (i = 0; i < obj->base.size / PAGE_SIZE; i++) {
+		for (i = 0; i < obj->base.size / PAGE_SIZE; ) {
 			struct page *page;
 			char *dst;
 
@@ -273,16 +275,18 @@ i915_gem_object_put_pages_phys(struct drm_i915_gem_object *obj,
 			if (IS_ERR(page))
 				continue;
 
-			dst = kmap_atomic(page);
-			drm_clflush_virt_range(vaddr, PAGE_SIZE);
-			memcpy(dst, vaddr, PAGE_SIZE);
-			kunmap_atomic(dst);
+			for (j = 0; j < hpage_nr_pages(page); ++j, ++i) {
+				dst = kmap_atomic(page + j);
+				drm_clflush_virt_range(vaddr, PAGE_SIZE);
+				memcpy(dst, vaddr, PAGE_SIZE);
+				kunmap_atomic(dst);
+				vaddr += PAGE_SIZE;
+			}
 
 			set_page_dirty(page);
 			if (obj->mm.madv == I915_MADV_WILLNEED)
 				mark_page_accessed(page);
 			put_page(page);
-			vaddr += PAGE_SIZE;
 		}
 		obj->mm.dirty = false;
 	}
@@ -2179,6 +2183,8 @@ i915_gem_object_put_pages_gtt(struct drm_i915_gem_object *obj,
 		i915_gem_object_save_bit_17_swizzle(obj, pages);
 
 	for_each_sgt_page(page, sgt_iter, pages) {
+		if (PageTail(page))
+			continue;
 		if (obj->mm.dirty)
 			set_page_dirty(page);
 
@@ -2272,6 +2278,15 @@ static bool i915_sg_trim(struct sg_table *orig_st)
 	return true;
 }
 
+static inline unsigned int i915_shmem_page_size(struct page *page)
+{
+#ifdef CONFIG_TRANSPARENT_HUGE_PAGECACHE
+	return PageTransHuge(page) ? HPAGE_PMD_SIZE : PAGE_SIZE;
+#else
+	return PAGE_SIZE;
+#endif
+}
+
 static struct sg_table *
 i915_gem_object_get_pages_gtt(struct drm_i915_gem_object *obj)
 {
@@ -2287,6 +2302,14 @@ i915_gem_object_get_pages_gtt(struct drm_i915_gem_object *obj)
 	unsigned int max_segment;
 	int ret;
 	gfp_t gfp;
+	const unsigned int gtt_page_sizes[] = {
+		I915_GTT_PAGE_SIZE_1G,
+		I915_GTT_PAGE_SIZE_2M,
+		I915_GTT_PAGE_SIZE_64K,
+		I915_GTT_PAGE_SIZE_4K,
+	};
+	unsigned int page_size;
+	int j;
 
 	/* Assert that the object is not currently in any GPU domain. As it
 	 * wasn't in the GTT, there shouldn't be any way it could have been in
@@ -2299,6 +2322,25 @@ i915_gem_object_get_pages_gtt(struct drm_i915_gem_object *obj)
 	if (!max_segment)
 		max_segment = rounddown(UINT_MAX, PAGE_SIZE);
 
+	/* max_segment is the maximum number of continuous PAGE_SIZE pages we
+	 * can have in the bounce buffer, assuming swiotlb. So optimistically
+	 * select the largest supported gtt page size which can fit into the
+	 * max_segment. Also take care to properly align the max_segment to
+	 * said page size to avoid any huge pages spilling across sg entries.
+	 */
+	for (j = 0; j < ARRAY_SIZE(gtt_page_sizes); ++j) {
+		unsigned int page_size = gtt_page_sizes[j];
+		unsigned int nr_pages = page_size >> PAGE_SHIFT;
+
+		if (SUPPORTS_PAGE_SIZE(dev_priv, page_size) &&
+		    page_size <= obj->page_size &&
+		    nr_pages <= max_segment) {
+			max_segment = rounddown(max_segment, nr_pages);
+			obj->gtt_page_size = page_size;
+			break;
+		}
+	}
+
 	st = kmalloc(sizeof(*st), GFP_KERNEL);
 	if (st == NULL)
 		return ERR_PTR(-ENOMEM);
@@ -2308,6 +2350,9 @@ rebuild_st:
 		kfree(st);
 		return ERR_PTR(-ENOMEM);
 	}
+
+	GEM_BUG_ON(!SUPPORTS_PAGE_SIZE(dev_priv, obj->gtt_page_size));
+	GEM_BUG_ON(!IS_ALIGNED(max_segment << PAGE_SHIFT, obj->gtt_page_size));
 
 	/* Get the list of pages out of our struct file.  They'll be pinned
 	 * at this point until we release them.
@@ -2319,7 +2364,7 @@ rebuild_st:
 	gfp |= __GFP_NORETRY | __GFP_NOWARN;
 	sg = st->sgl;
 	st->nents = 0;
-	for (i = 0; i < page_count; i++) {
+	for (i = 0; i < page_count; i += hpage_nr_pages(page)) {
 		page = shmem_read_mapping_page_gfp(mapping, i, gfp);
 		if (unlikely(IS_ERR(page))) {
 			i915_gem_shrink(dev_priv,
@@ -2349,17 +2394,36 @@ rebuild_st:
 				goto err_sg;
 			}
 		}
+
+		/* If we don't enough huge pages in the pool, fall back to the
+		 * minimum page size. We can still allocate huge-pages but now
+		 * obj->page_size and obj->gtt_page_size will reflect the
+		 * minimum page size in the mapping.
+		 */
+		page_size = i915_shmem_page_size(page);
+		if (page_size < obj->page_size) {
+			obj->page_size = PAGE_SIZE;
+			obj->gtt_page_size = I915_GTT_PAGE_SIZE;
+		}
+
+		/* TODO: if we don't use huge-pages or the object is small
+		 * we can probably do something clever with continious pages
+		 * here, if we have enough of them and they fit nicely into a
+		 * gtt page size and max_segment. Imagine a 64K object, and we
+		 * get 16 continuous 4K pages, we could get away with a single
+		 * 64K pte.
+		 */
 		if (!i ||
 		    sg->length >= max_segment ||
 		    page_to_pfn(page) != last_pfn + 1) {
 			if (i)
 				sg = sg_next(sg);
 			st->nents++;
-			sg_set_page(sg, page, PAGE_SIZE, 0);
+			sg_set_page(sg, page, page_size, 0);
 		} else {
-			sg->length += PAGE_SIZE;
+			sg->length += page_size;
 		}
-		last_pfn = page_to_pfn(page);
+		last_pfn = page_to_pfn(page) + hpage_nr_pages(page) - 1;
 
 		/* Check that the i965g/gm workaround works. */
 		WARN_ON((gfp & __GFP_DMA32) && (last_pfn >= 0x00100000UL));
@@ -2372,24 +2436,42 @@ rebuild_st:
 
 	ret = i915_gem_gtt_prepare_pages(obj, st);
 	if (ret) {
-		/* DMA remapping failed? One possible cause is that
-		 * it could not reserve enough large entries, asking
-		 * for PAGE_SIZE chunks instead may be helpful.
-		 */
-		if (max_segment > PAGE_SIZE) {
-			for_each_sgt_page(page, sgt_iter, st)
-				put_page(page);
-			sg_free_table(st);
-
-			max_segment = PAGE_SIZE;
-			goto rebuild_st;
-		} else {
+		if (max_segment == PAGE_SIZE) {
 			dev_warn(&dev_priv->drm.pdev->dev,
 				 "Failed to DMA remap %lu pages\n",
 				 page_count);
 			goto err_pages;
 		}
+
+		for_each_sgt_page(page, sgt_iter, st) {
+			if (!PageTail(page))
+				put_page(page);
+		}
+		sg_free_table(st);
+
+		/* DMA remapping failed? One possible cause is that
+		 * it could not reserve enough large entries, trying
+		 * smaller page size chunks instead may be helpful.
+		 *
+		 * We really don't know what the max_segment should be,
+		 * just go with the simple premise that the next
+		 * smallest segment will be at least half the size of
+		 * the previous.
+		 */
+		for (; j < ARRAY_SIZE(gtt_page_sizes); ++j) {
+			unsigned int page_size = gtt_page_sizes[j];
+
+			if (SUPPORTS_PAGE_SIZE(dev_priv, page_size) &&
+			    page_size < max_segment) {
+				obj->gtt_page_size = max_segment = page_size;
+				break;
+			}
+		}
+
+		goto rebuild_st;
 	}
+
+	GEM_BUG_ON(obj->gtt_page_size > obj->page_size);
 
 	if (i915_gem_object_needs_bit17_swizzle(obj))
 		i915_gem_object_do_bit_17_swizzle(obj, st);
@@ -2399,8 +2481,10 @@ rebuild_st:
 err_sg:
 	sg_mark_end(sg);
 err_pages:
-	for_each_sgt_page(page, sgt_iter, st)
-		put_page(page);
+	for_each_sgt_page(page, sgt_iter, st) {
+		if (!PageTail(page))
+			put_page(page);
+	}
 	sg_free_table(st);
 	kfree(st);
 
@@ -4192,9 +4276,35 @@ struct drm_i915_gem_object *
 i915_gem_object_create(struct drm_i915_private *dev_priv, u64 size)
 {
 	struct drm_i915_gem_object *obj;
+	unsigned int page_size = PAGE_SIZE;
 	struct address_space *mapping;
 	gfp_t mask;
 	int ret;
+
+	/* If configured *attempt* to use THP through shmemfs. HPAGE_PMD_SIZE
+	 * will either be 2M or 1G depending on the default hugepage_sz. This
+	 * is best effort and will of course depend on how many huge-pages we
+	 * have available in the pool. We determine the gtt page size when we
+	 * actually try pinning the backing storage, where gtt_page_size <=
+	 * page_size.
+	 *
+	 * XXX Some musings:
+	 *
+	 * - We don't know if the object will be inserted into the ppgtt where
+	 *   it will be most benificial to have huge-pages, or the ggtt where
+	 *   the object will always be treated like a 4K object.
+	 *
+	 * - Similarly should we care if the gtt doesn't support pages sizes >
+	 *   4K? If it does then great, if it doesn't then we do at least see
+	 *   the benefit of reduced fragmentation, so it's not a complete
+	 *   waste...thoughts?
+	 */
+#ifdef CONFIG_TRANSPARENT_HUGE_PAGECACHE
+	if (has_transparent_hugepage() && size >= HPAGE_PMD_SIZE) {
+		page_size = HPAGE_PMD_SIZE;
+		size = round_up(size, page_size);
+	}
+#endif
 
 	/* There is a prevalence of the assumption that we fit the object's
 	 * page count inside a 32bit _signed_ variable. Let's document this and
@@ -4226,6 +4336,19 @@ i915_gem_object_create(struct drm_i915_private *dev_priv, u64 size)
 	mapping_set_gfp_mask(mapping, mask);
 
 	i915_gem_object_init(obj, &i915_gem_object_ops);
+
+	/* In a few places we interact with shmemfs implicitly by writing
+	 * through the page_cache prior to pinning the backing storage, this
+	 * is for optimisation reasons and prevents shmemfs from needlessly
+	 * clearing pages. So in order to control the use of huge-pages, from
+	 * both the pinning of the backing store and any implicit interaction
+	 * which may end up allocating pages we require more than the provided
+	 * read_mapping or getpage interfaces provided by shmem. This should
+	 * effectively default to huge-page allocations in shmem for this
+	 * mapping.
+	 */
+	SHMEM_I(mapping->host)->huge = page_size > PAGE_SIZE;
+	obj->page_size = page_size;
 
 	obj->base.write_domain = I915_GEM_DOMAIN_CPU;
 	obj->base.read_domains = I915_GEM_DOMAIN_CPU;
