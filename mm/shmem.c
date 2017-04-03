@@ -1723,6 +1723,9 @@ repeat:
 		/* shmem_symlink() */
 		if (mapping->a_ops != &shmem_aops)
 			goto alloc_nohuge;
+		/* driver override shmem_huge */
+		if (info->huge)
+			goto alloc_huge;
 		if (shmem_huge == SHMEM_HUGE_DENY || sgp_huge == SGP_NOHUGE)
 			goto alloc_nohuge;
 		if (shmem_huge == SHMEM_HUGE_FORCE)
@@ -2000,6 +2003,7 @@ unsigned long shmem_get_unmapped_area(struct file *file,
 	unsigned long inflated_len;
 	unsigned long inflated_addr;
 	unsigned long inflated_offset;
+	struct shmem_inode_info *info = SHMEM_I(file_inode(file));
 
 	if (len > TASK_SIZE)
 		return -ENOMEM;
@@ -2016,7 +2020,7 @@ unsigned long shmem_get_unmapped_area(struct file *file,
 	if (addr > TASK_SIZE - len)
 		return addr;
 
-	if (shmem_huge == SHMEM_HUGE_DENY)
+	if (!info->huge && shmem_huge == SHMEM_HUGE_DENY)
 		return addr;
 	if (len < HPAGE_PMD_SIZE)
 		return addr;
@@ -2030,7 +2034,7 @@ unsigned long shmem_get_unmapped_area(struct file *file,
 	if (uaddr)
 		return addr;
 
-	if (shmem_huge != SHMEM_HUGE_FORCE) {
+	if (!info->huge && shmem_huge != SHMEM_HUGE_FORCE) {
 		struct super_block *sb;
 
 		if (file) {
@@ -4034,6 +4038,8 @@ bool shmem_huge_enabled(struct vm_area_struct *vma)
 	loff_t i_size;
 	pgoff_t off;
 
+	if (SHMEM_I(inode)->huge)
+		return true;
 	if (shmem_huge == SHMEM_HUGE_FORCE)
 		return true;
 	if (shmem_huge == SHMEM_HUGE_DENY)

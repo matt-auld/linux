@@ -21,6 +21,7 @@ struct shmem_inode_info {
 	struct shared_policy	policy;		/* NUMA memory alloc policy */
 	struct simple_xattrs	xattrs;		/* list of xattrs */
 	struct inode		vfs_inode;
+	bool                    huge;           /* driver override shmem_huge */
 };
 
 struct shmem_sb_info {
