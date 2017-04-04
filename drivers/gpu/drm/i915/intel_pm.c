@@ -8355,10 +8355,13 @@ static void broadwell_init_clock_gating(struct drm_i915_private *dev_priv)
 
 	/*
 	 * WaGttCachingOffByDefault:bdw
-	 * GTT cache may not work with big pages, so if those
-	 * are ever enabled GTT cache may need to be disabled.
+	 * The GTT cache must be disabled if the system is planning to use
+	 * 2M/1G pages.
 	 */
-	I915_WRITE(HSW_GTT_CACHE_EN, GTT_CACHE_EN_ALL);
+	I915_WRITE(HSW_GTT_CACHE_EN,
+		   HAS_PAGE_SIZE(dev_priv,
+				 I915_GTT_PAGE_SIZE_2M |
+				 I915_GTT_PAGE_SIZE_1G) ? 0 : GTT_CACHE_EN_ALL);
 
 	/* WaKVMNotificationOnConfigChange:bdw */
 	I915_WRITE(CHICKEN_PAR2_1, I915_READ(CHICKEN_PAR2_1)
