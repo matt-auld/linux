@@ -346,25 +346,6 @@ static bool shmem_confirm_swap(struct address_space *mapping,
 }
 
 /*
- * Definitions for "huge tmpfs": tmpfs mounted with the huge= option
- *
- * SHMEM_HUGE_NEVER:
- *	disables huge pages for the mount;
- * SHMEM_HUGE_ALWAYS:
- *	enables huge pages for the mount;
- * SHMEM_HUGE_WITHIN_SIZE:
- *	only allocate huge pages if the page will be fully within i_size,
- *	also respect fadvise()/madvise() hints;
- * SHMEM_HUGE_ADVISE:
- *	only allocate huge pages if requested with fadvise()/madvise();
- */
-
-#define SHMEM_HUGE_NEVER	0
-#define SHMEM_HUGE_ALWAYS	1
-#define SHMEM_HUGE_WITHIN_SIZE	2
-#define SHMEM_HUGE_ADVISE	3
-
-/*
  * Special values.
  * Only can be set via /sys/kernel/mm/transparent_hugepage/shmem_enabled:
  *
@@ -1715,6 +1696,8 @@ repeat:
 		swap_free(swap);
 
 	} else {
+		unsigned char sbinfo_huge = sbinfo->huge;
+
 		if (vma && userfaultfd_missing(vma)) {
 			*fault_type = handle_userfault(vmf, VM_UFFD_MISSING);
 			return 0;
@@ -1727,7 +1710,10 @@ repeat:
 			goto alloc_nohuge;
 		if (shmem_huge == SHMEM_HUGE_FORCE)
 			goto alloc_huge;
-		switch (sbinfo->huge) {
+		/* driver override the kernel mounted shm_mnt sbinfo->huge */
+		if (info->huge)
+			sbinfo_huge = info->huge;
+		switch (sbinfo_huge) {
 			loff_t i_size;
 			pgoff_t off;
 		case SHMEM_HUGE_NEVER:
@@ -2032,10 +2018,13 @@ unsigned long shmem_get_unmapped_area(struct file *file,
 
 	if (shmem_huge != SHMEM_HUGE_FORCE) {
 		struct super_block *sb;
+		unsigned char sbinfo_huge = 0;
 
 		if (file) {
 			VM_BUG_ON(file->f_op != &shmem_file_operations);
 			sb = file_inode(file)->i_sb;
+			/* driver override the kernel mounted shm_mnt sbinfo->huge */
+			sbinfo_huge = SHMEM_I(file_inode(file))->huge;
 		} else {
 			/*
 			 * Called directly from mm/mmap.c, or drivers/char/mem.c
@@ -2045,7 +2034,8 @@ unsigned long shmem_get_unmapped_area(struct file *file,
 				return addr;
 			sb = shm_mnt->mnt_sb;
 		}
-		if (SHMEM_SB(sb)->huge == SHMEM_HUGE_NEVER)
+		if (SHMEM_SB(sb)->huge == SHMEM_HUGE_NEVER &&
+		    sbinfo_huge == SHMEM_HUGE_NEVER)
 			return addr;
 	}
 
@@ -4031,6 +4021,7 @@ bool shmem_huge_enabled(struct vm_area_struct *vma)
 {
 	struct inode *inode = file_inode(vma->vm_file);
 	struct shmem_sb_info *sbinfo = SHMEM_SB(inode->i_sb);
+	unsigned char sbinfo_huge = sbinfo->huge;
 	loff_t i_size;
 	pgoff_t off;
 
@@ -4038,7 +4029,9 @@ bool shmem_huge_enabled(struct vm_area_struct *vma)
 		return true;
 	if (shmem_huge == SHMEM_HUGE_DENY)
 		return false;
-	switch (sbinfo->huge) {
+	if (SHMEM_I(inode)->huge)
+		sbinfo_huge = SHMEM_I(inode)->huge;
+	switch (sbinfo_huge) {
 		case SHMEM_HUGE_NEVER:
 			return false;
 		case SHMEM_HUGE_ALWAYS:
