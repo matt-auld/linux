@@ -1727,6 +1727,9 @@ repeat:
 			goto alloc_nohuge;
 		if (shmem_huge == SHMEM_HUGE_FORCE)
 			goto alloc_huge;
+		/* driver override kernel mounted sbinfo->huge */
+		if (info->huge)
+			goto alloc_huge;
 		switch (sbinfo->huge) {
 			loff_t i_size;
 			pgoff_t off;
@@ -2032,10 +2035,12 @@ unsigned long shmem_get_unmapped_area(struct file *file,
 
 	if (shmem_huge != SHMEM_HUGE_FORCE) {
 		struct super_block *sb;
+		bool huge = false;
 
 		if (file) {
 			VM_BUG_ON(file->f_op != &shmem_file_operations);
 			sb = file_inode(file)->i_sb;
+			huge = SHMEM_I(file_inode(file))->huge;
 		} else {
 			/*
 			 * Called directly from mm/mmap.c, or drivers/char/mem.c
@@ -2045,7 +2050,7 @@ unsigned long shmem_get_unmapped_area(struct file *file,
 				return addr;
 			sb = shm_mnt->mnt_sb;
 		}
-		if (SHMEM_SB(sb)->huge == SHMEM_HUGE_NEVER)
+		if (!huge && SHMEM_SB(sb)->huge == SHMEM_HUGE_NEVER)
 			return addr;
 	}
 
@@ -4038,6 +4043,8 @@ bool shmem_huge_enabled(struct vm_area_struct *vma)
 		return true;
 	if (shmem_huge == SHMEM_HUGE_DENY)
 		return false;
+	if (SHMEM_I(inode)->huge)
+		return true;
 	switch (sbinfo->huge) {
 		case SHMEM_HUGE_NEVER:
 			return false;
