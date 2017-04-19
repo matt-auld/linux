@@ -2349,6 +2349,12 @@ i915_gem_object_get_pages_gtt(struct drm_i915_gem_object *obj)
 	unsigned int min_page_size = HPAGE_PMD_SIZE;
 	int ret;
 	gfp_t gfp;
+	unsigned int page_sizes[] = {
+		I915_GTT_PAGE_SIZE_4K,
+		I915_GTT_PAGE_SIZE_64K,
+		I915_GTT_PAGE_SIZE_2M,
+		I915_GTT_PAGE_SIZE_1G,
+	};
 
 	/* Assert that the object is not currently in any GPU domain. As it
 	 * wasn't in the GTT, there shouldn't be any way it could have been in
@@ -2448,21 +2454,42 @@ rebuild_st:
 	if (ret) {
 		/* DMA remapping failed? One possible cause is that
 		 * it could not reserve enough large entries, asking
-		 * for PAGE_SIZE chunks instead may be helpful.
+		 * for smaller chunks instead may be helpful.
 		 */
-		if (max_segment > PAGE_SIZE) {
-			for_each_sgt_page(page, sgt_iter, st)
-				put_page(page);
-			sg_free_table(st);
-
-			max_segment = PAGE_SIZE;
-			goto rebuild_st;
-		} else {
+		if (max_segment <= PAGE_SIZE) {
 			dev_warn(&dev_priv->drm.pdev->dev,
 				 "Failed to DMA remap %lu pages\n",
 				 page_count);
 			goto err_pages;
 		}
+
+		for_each_sgt_page(page, sgt_iter, st)
+			put_page(page);
+		sg_free_table(st);
+
+		/* If we were able to fill the sg table with super-pages, try
+		 * to be optimistic by whittling the max_segment down to the
+		 * next smallest gtt page size, otherwise just fallback to the
+		 * PAGE_SIZE minimum. The hope here is to end up with something
+		 * like 2M pages with 64K pte's, or even 1G pages with 2M or
+		 * 64K pte's.
+		 */
+		if (min_page_size == PAGE_SIZE) {
+			max_segment = PAGE_SIZE;
+			goto rebuild_st;
+		}
+
+		for (i = 0; i < ARRAY_SIZE(page_sizes); ++i) {
+			unsigned int page_size = page_sizes[i];
+
+			if (SUPPORTS_PAGE_SIZE(dev_priv, page_size) &&
+			    page_size < max_segment) {
+				max_segment = page_size;
+				break;
+			}
+		}
+
+		goto rebuild_st;
 	}
 
 	if (i915_gem_object_needs_bit17_swizzle(obj))
