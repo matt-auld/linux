@@ -2324,6 +2324,15 @@ static bool i915_sg_trim(struct sg_table *orig_st)
 	return true;
 }
 
+static inline unsigned int i915_shmem_page_size(struct page *page)
+{
+#ifdef CONFIG_TRANSPARENT_HUGE_PAGECACHE
+	return PageTransHuge(page) ? HPAGE_PMD_SIZE : PAGE_SIZE;
+#else
+	return PAGE_SIZE;
+#endif
+}
+
 static struct sg_table *
 i915_gem_object_get_pages_gtt(struct drm_i915_gem_object *obj)
 {
@@ -2337,6 +2346,7 @@ i915_gem_object_get_pages_gtt(struct drm_i915_gem_object *obj)
 	struct page *page;
 	unsigned long last_pfn = 0;	/* suppress gcc warning */
 	unsigned int max_segment;
+	unsigned int min_page_size = HPAGE_PMD_SIZE;
 	int ret;
 	gfp_t gfp;
 
@@ -2350,6 +2360,13 @@ i915_gem_object_get_pages_gtt(struct drm_i915_gem_object *obj)
 	max_segment = swiotlb_max_segment();
 	if (!max_segment)
 		max_segment = rounddown(UINT_MAX, PAGE_SIZE);
+
+	/* We don't want a huge-page to spill across sg entries, which could
+	 * potentially happen if we coalesce two or more contiguous huge-pages
+	 * and max_segment is not aligned to HPAGE_PMD_SIZE.
+	 */
+	if (max_segment > HPAGE_PMD_SIZE)
+		max_segment = rounddown(max_segment, HPAGE_PMD_SIZE);
 
 	st = kmalloc(sizeof(*st), GFP_KERNEL);
 	if (st == NULL)
@@ -2401,6 +2418,11 @@ rebuild_st:
 				goto err_sg;
 			}
 		}
+
+		if (!PageTail(page))
+			min_page_size = min(i915_shmem_page_size(page),
+					    min_page_size);
+
 		if (!i ||
 		    sg->length >= max_segment ||
 		    page_to_pfn(page) != last_pfn + 1) {
@@ -2445,6 +2467,15 @@ rebuild_st:
 
 	if (i915_gem_object_needs_bit17_swizzle(obj))
 		i915_gem_object_do_bit_17_swizzle(obj, st);
+
+	/* A mapping could potentially have multiple page sizes, but for now we
+	 * choose to only support a single gtt page size across a given object,
+	 * so just use the minimum page size in the mapping as our gtt page
+	 * size.
+	 */
+	if (SUPPORTS_PAGE_SIZE(dev_priv, min_page_size) &&
+	    min_page_size <= max_segment)
+		obj->gtt_page_size = min_page_size;
 
 	return st;
 
