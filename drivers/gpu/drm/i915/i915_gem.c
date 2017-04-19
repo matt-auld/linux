@@ -4308,6 +4308,24 @@ i915_gem_object_create(struct drm_i915_private *dev_priv, u64 size)
 	mapping = obj->base.filp->f_mapping;
 	mapping_set_gfp_mask(mapping, mask);
 
+	/* If configured attempt to use THP through shmemfs. This will
+	 * effectively default to huge-pages for this mapping if it makes sense
+	 * given the object size and HPAGE_PMD_SIZE. This is best effort only.
+	 *
+	 * In a few places we interact with shmemfs implicitly by writing
+	 * through the page-cache prior to pinning the backing storage, this is
+	 * for optimisation reasons and prevents shmemfs from needlessly
+	 * clearing pages. So in order to control the use of huge-pages, from
+	 * both the pinning of the backing store and any implicit interaction
+	 * which may end up allocating pages we require more than the provided
+	 * getpage interfaces provided by shmem.
+	 */
+#ifdef CONFIG_TRANSPARENT_HUGE_PAGECACHE
+	if (has_transparent_hugepage() &&
+	    HAS_PAGE_SIZE(dev_priv, HPAGE_PMD_SIZE))
+		SHMEM_I(mapping->host)->huge = SHMEM_HUGE_WITHIN_SIZE;
+#endif
+
 	i915_gem_object_init(obj, &i915_gem_object_ops);
 
 	obj->base.write_domain = I915_GEM_DOMAIN_CPU;
