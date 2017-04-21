@@ -319,7 +319,9 @@ static const struct intel_device_info intel_haswell_info = {
 #define BDW_FEATURES \
 	HSW_FEATURES, \
 	BDW_COLORS, \
-	GEN_DEFAULT_PAGE_SIZES, \
+	.page_size_mask = I915_GTT_PAGE_SIZE_4K | \
+			  I915_GTT_PAGE_SIZE_2M | \
+			  I915_GTT_PAGE_SIZE_1G, \
 	.has_logical_ring_contexts = 1, \
 	.has_full_48bit_ppgtt = 1, \
 	.has_64bit_reloc = 1
@@ -354,14 +356,20 @@ static const struct intel_device_info intel_cherryview_info = {
 	.has_aliasing_ppgtt = 1,
 	.has_full_ppgtt = 1,
 	.display_mmio_offset = VLV_DISPLAY_BASE,
-	GEN_DEFAULT_PAGE_SIZES,
+	.page_size_mask = I915_GTT_PAGE_SIZE_4K |
+			  I915_GTT_PAGE_SIZE_64K |
+			  I915_GTT_PAGE_SIZE_2M |
+			  I915_GTT_PAGE_SIZE_1G,
 	GEN_CHV_PIPEOFFSETS,
 	CURSOR_OFFSETS,
 	CHV_COLORS,
 };
 
 #define GEN9_DEFAULT_PAGE_SIZES \
-	.page_size_mask = I915_GTT_PAGE_SIZE_4K
+	.page_size_mask = I915_GTT_PAGE_SIZE_4K | \
+			  I915_GTT_PAGE_SIZE_64K | \
+			  I915_GTT_PAGE_SIZE_2M | \
+			  I915_GTT_PAGE_SIZE_1G
 
 static const struct intel_device_info intel_skylake_info = {
 	BDW_FEATURES,
