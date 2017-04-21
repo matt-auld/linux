@@ -471,6 +471,15 @@ i915_vma_insert(struct i915_vma *vma, u64 size, u64 alignment, u64 flags)
 	if (ret)
 		return ret;
 
+	/* We only support inserting huge gtt page sizes into a 48b PPGTT,
+	 * including the aliasing PPGTT.
+	 */
+	if (USES_FULL_48BIT_PPGTT(dev_priv) && flags & I915_VMA_LOCAL_BIND) {
+		alignment = max_t(typeof(alignment), alignment,
+				  obj->gtt_page_size);
+		GEM_BUG_ON(!IS_ALIGNED(size, alignment));
+	}
+
 	if (flags & PIN_OFFSET_FIXED) {
 		u64 offset = flags & PIN_OFFSET_MASK;
 		if (!IS_ALIGNED(offset, alignment) ||
@@ -496,6 +505,7 @@ i915_vma_insert(struct i915_vma *vma, u64 size, u64 alignment, u64 flags)
 	}
 	GEM_BUG_ON(!drm_mm_node_allocated(&vma->node));
 	GEM_BUG_ON(!i915_gem_valid_gtt_space(vma, obj->cache_level));
+	GEM_BUG_ON(i915_vma_misplaced(vma, size, alignment, flags));
 
 	list_move_tail(&obj->global_link, &dev_priv->mm.bound_list);
 	list_move_tail(&vma->vm_link, &vma->vm->inactive_list);
