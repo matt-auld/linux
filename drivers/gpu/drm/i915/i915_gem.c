@@ -2337,6 +2337,7 @@ i915_gem_object_get_pages_gtt(struct drm_i915_gem_object *obj)
 	struct page *page;
 	unsigned long last_pfn = 0;	/* suppress gcc warning */
 	unsigned int max_segment;
+	unsigned int max_sg_length;
 	int ret;
 	gfp_t gfp;
 
@@ -2350,6 +2351,8 @@ i915_gem_object_get_pages_gtt(struct drm_i915_gem_object *obj)
 	max_segment = swiotlb_max_segment();
 	if (!max_segment)
 		max_segment = rounddown(UINT_MAX, PAGE_SIZE);
+
+	max_sg_length = PAGE_SIZE;
 
 	st = kmalloc(sizeof(*st), GFP_KERNEL);
 	if (st == NULL)
@@ -2404,8 +2407,10 @@ rebuild_st:
 		if (!i ||
 		    sg->length >= max_segment ||
 		    page_to_pfn(page) != last_pfn + 1) {
-			if (i)
+			if (i) {
+				max_sg_length = max(max_sg_length, sg->length);
 				sg = sg_next(sg);
+			}
 			st->nents++;
 			sg_set_page(sg, page, PAGE_SIZE, 0);
 		} else {
@@ -2428,7 +2433,7 @@ rebuild_st:
 		 * it could not reserve enough large entries, asking
 		 * for PAGE_SIZE chunks instead may be helpful.
 		 */
-		if (max_segment > PAGE_SIZE) {
+		if (max_sg_length > PAGE_SIZE) {
 			for_each_sgt_page(page, sgt_iter, st)
 				put_page(page);
 			sg_free_table(st);
