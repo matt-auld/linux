@@ -2473,6 +2473,13 @@ err_pages:
 void __i915_gem_object_set_pages(struct drm_i915_gem_object *obj,
 				 struct sg_table *pages)
 {
+	struct drm_i915_private *i915 = to_i915(obj->base.dev);
+	unsigned long supported_page_sizes = INTEL_INFO(i915)->page_size_mask;
+	struct scatterlist *sg;
+	unsigned int sg_mask = 0;
+	unsigned int i;
+	unsigned int bit;
+
 	lockdep_assert_held(&obj->mm.lock);
 
 	obj->mm.get_page.sg_pos = pages->sgl;
@@ -2486,6 +2493,18 @@ void __i915_gem_object_set_pages(struct drm_i915_gem_object *obj,
 		__i915_gem_object_pin_pages(obj);
 		obj->mm.quirked = true;
 	}
+
+	for_each_sg(pages->sgl, sg, pages->nents, i)
+		sg_mask |= sg->length;
+
+	GEM_BUG_ON(!sg_mask);
+
+	for_each_set_bit(bit, &supported_page_sizes, BITS_PER_LONG) {
+		if (IS_ALIGNED(sg_mask, 1 << bit))
+			obj->gtt_page_size = 1 << bit;
+	}
+
+	GEM_BUG_ON(!HAS_PAGE_SIZE(i915, obj->gtt_page_size));
 }
 
 static int ____i915_gem_object_get_pages(struct drm_i915_gem_object *obj)
