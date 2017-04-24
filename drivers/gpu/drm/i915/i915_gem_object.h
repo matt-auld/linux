@@ -129,6 +129,11 @@ struct drm_i915_gem_object {
 		struct sg_table *pages;
 		void *mapping;
 
+		struct i915_page_sizes {
+			unsigned int phys;
+			unsigned int sg;
+		} page_sizes;
+
 		struct i915_gem_object_page_iter {
 			struct scatterlist *sg_pos;
 			unsigned int sg_idx; /* in pages, but 32bit eek! */

@@ -2294,6 +2294,8 @@ void __i915_gem_object_put_pages(struct drm_i915_gem_object *obj,
 	if (!IS_ERR(pages))
 		obj->ops->put_pages(obj, pages);
 
+	obj->mm.page_sizes.phys = obj->mm.page_sizes.sg = 0;
+
 unlock:
 	mutex_unlock(&obj->mm.lock);
 }
@@ -2473,6 +2475,7 @@ err_pages:
 void __i915_gem_object_set_pages(struct drm_i915_gem_object *obj,
 				 struct sg_table *pages)
 {
+
 	lockdep_assert_held(&obj->mm.lock);
 
 	obj->mm.get_page.sg_pos = pages->sgl;
@@ -2516,6 +2519,13 @@ static int ____i915_gem_object_get_pages(struct drm_i915_gem_object *obj)
  */
 int __i915_gem_object_get_pages(struct drm_i915_gem_object *obj)
 {
+	struct drm_i915_private *i915 = to_i915(obj->base.dev);
+	unsigned long supported_page_sizes = INTEL_INFO(i915)->page_size_mask;
+	struct scatterlist *sg;
+	unsigned int sg_mask = 0;
+	unsigned int i;
+	unsigned int bit;
+	unsigned int max_page_size;
 	int err;
 
 	err = mutex_lock_interruptible(&obj->mm.lock);
@@ -2533,7 +2543,33 @@ int __i915_gem_object_get_pages(struct drm_i915_gem_object *obj)
 
 unlock:
 	mutex_unlock(&obj->mm.lock);
-	return err;
+
+	if (err)
+		return err;
+
+	for_each_sg(obj->mm.pages->sgl, sg, obj->mm.pages->nents, i)
+		sg_mask |= sg->length;
+
+	GEM_BUG_ON(!sg_mask);
+
+	obj->mm.page_sizes.phys = sg_mask;
+
+	obj->mm.page_sizes.sg = 0;
+
+	for_each_set_bit(bit, &supported_page_sizes, BITS_PER_LONG) {
+		if (obj->mm.page_sizes.phys & ~0u << bit)
+			obj->mm.page_sizes.sg |= BIT(bit);
+	}
+
+	max_page_size = BIT(fls64(obj->mm.page_sizes.sg)-1);
+
+	/* If were are actually dealing with a single page-size, mark it so */
+	if (IS_ALIGNED(obj->mm.page_sizes.phys, max_page_size))
+		obj->mm.page_sizes.sg = max_page_size;
+
+	GEM_BUG_ON(!HAS_PAGE_SIZE(i915, obj->mm.page_sizes.sg));
+
+	return 0;
 }
 
 /* The 'mapping' part of i915_gem_object_pin_map() below */
