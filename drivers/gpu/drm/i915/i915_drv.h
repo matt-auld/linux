@@ -2873,6 +2873,8 @@ intel_info(const struct drm_i915_private *dev_priv)
 #define USES_PPGTT(dev_priv)		(i915.enable_ppgtt)
 #define USES_FULL_PPGTT(dev_priv)	(i915.enable_ppgtt >= 2)
 #define USES_FULL_48BIT_PPGTT(dev_priv)	(i915.enable_ppgtt == 3)
+#define HAS_PAGE_SIZE(dev_priv, page_size) \
+	((dev_priv)->info.page_size_mask & (page_size))
 
 #define HAS_OVERLAY(dev_priv)		 ((dev_priv)->info.has_overlay)
 #define OVERLAY_NEEDS_PHYSICAL(dev_priv) \
