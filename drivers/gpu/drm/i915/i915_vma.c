@@ -471,6 +471,14 @@ i915_vma_insert(struct i915_vma *vma, u64 size, u64 alignment, u64 flags)
 	if (ret)
 		return ret;
 
+	if (i915_vm_is_48bit(vma->vm) &&
+	    obj->gtt_page_size > I915_GTT_PAGE_SIZE) {
+		unsigned int page_alignment = obj->gtt_page_size;
+
+		alignment = max_t(typeof(alignment), alignment, page_alignment);
+		GEM_BUG_ON(!IS_ALIGNED(size, page_alignment));
+	}
+
 	if (flags & PIN_OFFSET_FIXED) {
 		u64 offset = flags & PIN_OFFSET_MASK;
 		if (!IS_ALIGNED(offset, alignment) ||
