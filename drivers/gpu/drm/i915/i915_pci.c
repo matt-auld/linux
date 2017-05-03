@@ -354,14 +354,16 @@ static const struct intel_device_info intel_cherryview_info = {
 	.has_aliasing_ppgtt = 1,
 	.has_full_ppgtt = 1,
 	.display_mmio_offset = VLV_DISPLAY_BASE,
-	GEN_DEFAULT_PAGE_SIZES,
+	.page_size_mask = I915_GTT_PAGE_SIZE_4K |
+			  I915_GTT_PAGE_SIZE_64K,
 	GEN_CHV_PIPEOFFSETS,
 	CURSOR_OFFSETS,
 	CHV_COLORS,
 };
 
 #define GEN9_DEFAULT_PAGE_SIZES \
-	.page_size_mask = I915_GTT_PAGE_SIZE_4K
+	.page_size_mask = I915_GTT_PAGE_SIZE_4K | \
+			  I915_GTT_PAGE_SIZE_64K
 
 static const struct intel_device_info intel_skylake_info = {
 	BDW_FEATURES,
