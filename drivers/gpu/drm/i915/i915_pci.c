@@ -364,7 +364,8 @@ static const struct intel_device_info intel_cherryview_info = {
 };
 
 #define GEN9_DEFAULT_PAGE_SIZES \
-	.page_size_mask = I915_GTT_PAGE_SIZE_4K
+	.page_size_mask = I915_GTT_PAGE_SIZE_4K | \
+			  I915_GTT_PAGE_SIZE_64K
 
 #define SKL_PLATFORM \
 	BDW_FEATURES, \
