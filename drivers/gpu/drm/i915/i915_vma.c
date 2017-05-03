@@ -475,6 +475,15 @@ i915_vma_insert(struct i915_vma *vma, u64 size, u64 alignment, u64 flags)
 	    obj->gtt_page_size > I915_GTT_PAGE_SIZE) {
 		unsigned int page_alignment = obj->gtt_page_size;
 
+		/* We can't mix 64K and 4K pte's in the same page-table (2M
+		 * block), and so to avoid the ugliness and complexity of
+		 * coloring we opt for just aligning 64K objects to 2M.
+		 */
+		if (page_alignment == I915_GTT_PAGE_SIZE_64K) {
+			page_alignment = I915_GTT_PAGE_SIZE_2M;
+			size = roundup(size, page_alignment);
+		}
+
 		alignment = max_t(typeof(alignment), alignment, page_alignment);
 		GEM_BUG_ON(!IS_ALIGNED(size, page_alignment));
 	}
