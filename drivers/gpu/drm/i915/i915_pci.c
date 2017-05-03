@@ -56,6 +56,10 @@
 	.color = { .degamma_lut_size = 65, .gamma_lut_size = 257 }
 
 /* Keep in gen based order, and chronological order within a gen */
+
+#define GEN_DEFAULT_PAGE_SIZES \
+	.page_sizes = I915_GTT_PAGE_SIZE_4K
+
 #define GEN2_FEATURES \
 	.gen = 2, .num_pipes = 1, \
 	.has_overlay = 1, .overlay_needs_physical = 1, \
@@ -65,6 +69,7 @@
 	.ring_mask = RENDER_RING, \
 	.has_snoop = true, \
 	GEN_DEFAULT_PIPEOFFSETS, \
+	GEN_DEFAULT_PAGE_SIZES, \
 	CURSOR_OFFSETS
 
 static const struct intel_device_info intel_i830_info __initconst = {
@@ -98,6 +103,7 @@ static const struct intel_device_info intel_i865g_info __initconst = {
 	.ring_mask = RENDER_RING, \
 	.has_snoop = true, \
 	GEN_DEFAULT_PIPEOFFSETS, \
+	GEN_DEFAULT_PAGE_SIZES, \
 	CURSOR_OFFSETS
 
 static const struct intel_device_info intel_i915g_info __initconst = {
@@ -161,6 +167,7 @@ static const struct intel_device_info intel_pineview_info __initconst = {
 	.ring_mask = RENDER_RING, \
 	.has_snoop = true, \
 	GEN_DEFAULT_PIPEOFFSETS, \
+	GEN_DEFAULT_PAGE_SIZES, \
 	CURSOR_OFFSETS
 
 static const struct intel_device_info intel_i965g_info __initconst = {
@@ -204,6 +211,7 @@ static const struct intel_device_info intel_gm45_info __initconst = {
 	.ring_mask = RENDER_RING | BSD_RING, \
 	.has_snoop = true, \
 	GEN_DEFAULT_PIPEOFFSETS, \
+	GEN_DEFAULT_PAGE_SIZES, \
 	CURSOR_OFFSETS
 
 static const struct intel_device_info intel_ironlake_d_info __initconst = {
@@ -228,6 +236,7 @@ static const struct intel_device_info intel_ironlake_m_info __initconst = {
 	.has_gmbus_irq = 1, \
 	.has_aliasing_ppgtt = 1, \
 	GEN_DEFAULT_PIPEOFFSETS, \
+	GEN_DEFAULT_PAGE_SIZES, \
 	CURSOR_OFFSETS
 
 #define SNB_D_PLATFORM \
@@ -272,6 +281,7 @@ static const struct intel_device_info intel_sandybridge_m_gt2_info __initconst =
 	.has_aliasing_ppgtt = 1, \
 	.has_full_ppgtt = 1, \
 	GEN_DEFAULT_PIPEOFFSETS, \
+	GEN_DEFAULT_PAGE_SIZES, \
 	IVB_CURSOR_OFFSETS
 
 #define IVB_D_PLATFORM \
@@ -329,6 +339,7 @@ static const struct intel_device_info intel_valleyview_info __initconst = {
 	.has_snoop = true,
 	.ring_mask = RENDER_RING | BSD_RING | BLT_RING,
 	.display_mmio_offset = VLV_DISPLAY_BASE,
+	GEN_DEFAULT_PAGE_SIZES,
 	GEN_DEFAULT_PIPEOFFSETS,
 	CURSOR_OFFSETS
 };
@@ -367,6 +378,7 @@ static const struct intel_device_info intel_haswell_gt3_info __initconst = {
 #define BDW_FEATURES \
 	HSW_FEATURES, \
 	BDW_COLORS, \
+	GEN_DEFAULT_PAGE_SIZES, \
 	.has_logical_ring_contexts = 1, \
 	.has_full_48bit_ppgtt = 1, \
 	.has_64bit_reloc = 1, \
@@ -420,13 +432,18 @@ static const struct intel_device_info intel_cherryview_info __initconst = {
 	.has_reset_engine = 1,
 	.has_snoop = true,
 	.display_mmio_offset = VLV_DISPLAY_BASE,
+	GEN_DEFAULT_PAGE_SIZES,
 	GEN_CHV_PIPEOFFSETS,
 	CURSOR_OFFSETS,
 	CHV_COLORS,
 };
 
+#define GEN9_DEFAULT_PAGE_SIZES \
+	.page_sizes = I915_GTT_PAGE_SIZE_4K
+
 #define SKL_PLATFORM \
 	BDW_FEATURES, \
+	GEN9_DEFAULT_PAGE_SIZES, \
 	.gen = 9, \
 	.platform = INTEL_SKYLAKE, \
 	.has_csr = 1, \
@@ -483,6 +500,7 @@ static const struct intel_device_info intel_skylake_gt4_info __initconst = {
 	.has_reset_engine = 1, \
 	.has_snoop = true, \
 	.has_ipc = 1, \
+	GEN9_DEFAULT_PAGE_SIZES, \
 	GEN_DEFAULT_PIPEOFFSETS, \
 	IVB_CURSOR_OFFSETS, \
 	BDW_COLORS
@@ -502,6 +520,7 @@ static const struct intel_device_info intel_geminilake_info __initconst = {
 
 #define KBL_PLATFORM \
 	BDW_FEATURES, \
+	GEN9_DEFAULT_PAGE_SIZES, \
 	.gen = 9, \
 	.platform = INTEL_KABYLAKE, \
 	.has_csr = 1, \
@@ -553,6 +572,7 @@ static const struct intel_device_info intel_coffeelake_gt3_info __initconst = {
 
 static const struct intel_device_info intel_cannonlake_gt2_info __initconst = {
 	BDW_FEATURES,
+	GEN9_DEFAULT_PAGE_SIZES, \
 	.is_alpha_support = 1,
 	.platform = INTEL_CANNONLAKE,
 	.gen = 10,
