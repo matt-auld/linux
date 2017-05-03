@@ -479,6 +479,15 @@ i915_vma_insert(struct i915_vma *vma, u64 size, u64 alignment, u64 flags)
 			goto err_unpin;
 		}
 
+		/* A current limitation in our implementation is that 64K
+		 * objects must be aligned to 2M, and given that we can't
+		 * enforce this for soft pinning, we need to fallback to normal
+		 * pages if don't meet this restriction.
+		 */
+		if (obj->mm.page_sizes.sg == I915_GTT_PAGE_SIZE_64K &&
+		    !IS_ALIGNED(offset | size, I915_GTT_PAGE_SIZE_2M))
+			obj->mm.page_sizes.sg = I915_GTT_PAGE_SIZE;
+
 		ret = i915_gem_gtt_reserve(vma->vm, &vma->node,
 					   size, offset, obj->cache_level,
 					   flags);
@@ -492,6 +501,15 @@ i915_vma_insert(struct i915_vma *vma, u64 size, u64 alignment, u64 flags)
 			/* Align to the largest and hope for the best */
 			if (!is_power_of_2(page_alignment))
 				page_alignment = BIT(fls64(page_alignment)-1);
+
+			/* We can't mix 64K and 4K pte's in the same page-table (2M
+			 * block), and so to avoid the ugliness and complexity of
+			 * coloring we opt for just aligning 64K objects to 2M.
+			 */
+			if (obj->mm.page_sizes.sg == I915_GTT_PAGE_SIZE_64K) {
+				page_alignment = I915_GTT_PAGE_SIZE_2M;
+				size = roundup(size, page_alignment);
+			}
 
 			alignment = max_t(typeof(alignment), alignment,
 					  page_alignment);
