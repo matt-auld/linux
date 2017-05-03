@@ -485,6 +485,18 @@ i915_vma_insert(struct i915_vma *vma, u64 size, u64 alignment, u64 flags)
 		if (ret)
 			goto err_unpin;
 	} else {
+		if (i915_vm_is_48bit(vma->vm) &&
+		    obj->mm.page_sizes.sg > I915_GTT_PAGE_SIZE) {
+			unsigned int page_alignment = obj->mm.page_sizes.sg;
+
+			/* Align to the largest and hope for the best */
+			if (!is_power_of_2(page_alignment))
+				page_alignment = BIT(fls64(page_alignment)-1);
+
+			alignment = max_t(typeof(alignment), alignment,
+					  page_alignment);
+		}
+
 		ret = i915_gem_gtt_insert(vma->vm, &vma->node,
 					  size, alignment, obj->cache_level,
 					  start, end, flags);
