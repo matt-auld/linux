@@ -374,7 +374,8 @@ static const struct intel_device_info intel_haswell_gt3_info __initconst = {
 #define BDW_FEATURES \
 	HSW_FEATURES, \
 	BDW_COLORS, \
-	GEN_DEFAULT_PAGE_SIZES, \
+	.page_sizes = I915_GTT_PAGE_SIZE_4K | \
+		      I915_GTT_PAGE_SIZE_2M, \
 	.has_logical_ring_contexts = 1, \
 	.has_full_48bit_ppgtt = 1, \
 	.has_64bit_reloc = 1, \
@@ -435,7 +436,8 @@ static const struct intel_device_info intel_cherryview_info __initconst = {
 
 #define GEN9_DEFAULT_PAGE_SIZES \
 	.page_sizes = I915_GTT_PAGE_SIZE_4K | \
-		      I915_GTT_PAGE_SIZE_64K
+		      I915_GTT_PAGE_SIZE_64K | \
+		      I915_GTT_PAGE_SIZE_2M
 
 #define SKL_PLATFORM \
 	BDW_FEATURES, \
