@@ -493,6 +493,15 @@ i915_vma_insert(struct i915_vma *vma, u64 size, u64 alignment, u64 flags)
 			if (!is_power_of_2(page_alignment))
 				page_alignment = BIT(fls64(page_alignment)-1);
 
+			/* We can't mix 64K and 4K pte's in the same page-table (2M
+			 * block), and so to avoid the ugliness and complexity of
+			 * coloring we opt for just aligning 64K objects to 2M.
+			 */
+			if (page_alignment == I915_GTT_PAGE_SIZE_64K) {
+				page_alignment = I915_GTT_PAGE_SIZE_2M;
+				size = roundup(size, page_alignment);
+			}
+
 			alignment = max_t(typeof(alignment), alignment,
 					  page_alignment);
 		}
