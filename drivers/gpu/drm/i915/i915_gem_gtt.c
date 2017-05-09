@@ -191,11 +191,15 @@ static int ppgtt_bind_vma(struct i915_vma *vma,
 			  u32 unused)
 {
 	u32 pte_flags;
+	u32 vma_flags = vma->flags & I915_VMA_LOCAL_BIND;
 	int ret;
 
-	ret = vma->vm->allocate_va_range(vma->vm, vma->node.start, vma->size);
-	if (ret)
-		return ret;
+	if (vma_flags == 0) {
+		ret = vma->vm->allocate_va_range(vma->vm, vma->node.start,
+						 vma->size);
+		if (ret)
+			return ret;
+	}
 
 	vma->pages = vma->obj->mm.pages;
 
@@ -2288,6 +2292,7 @@ static int aliasing_gtt_bind_vma(struct i915_vma *vma,
 {
 	struct drm_i915_private *i915 = vma->vm->i915;
 	u32 pte_flags;
+	u32 vma_flags = vma->flags & (I915_VMA_GLOBAL_BIND | I915_VMA_LOCAL_BIND);
 	int ret;
 
 	if (unlikely(!vma->pages)) {
@@ -2304,7 +2309,7 @@ static int aliasing_gtt_bind_vma(struct i915_vma *vma,
 	if (flags & I915_VMA_LOCAL_BIND) {
 		struct i915_hw_ppgtt *appgtt = i915->mm.aliasing_ppgtt;
 
-		if (appgtt->base.allocate_va_range) {
+		if (vma_flags == 0 && appgtt->base.allocate_va_range) {
 			ret = appgtt->base.allocate_va_range(&appgtt->base,
 							     vma->node.start,
 							     vma->node.size);
@@ -2328,7 +2333,7 @@ static int aliasing_gtt_bind_vma(struct i915_vma *vma,
 	return 0;
 
 err_pages:
-	if (!(vma->flags & (I915_VMA_GLOBAL_BIND | I915_VMA_LOCAL_BIND))) {
+	if (vma_flags == 0) {
 		if (vma->pages != vma->obj->mm.pages) {
 			GEM_BUG_ON(!vma->pages);
 			sg_free_table(vma->pages);
