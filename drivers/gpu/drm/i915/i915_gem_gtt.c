@@ -2312,7 +2312,7 @@ static int aliasing_gtt_bind_vma(struct i915_vma *vma,
 		if (vma_flags == 0 && appgtt->base.allocate_va_range) {
 			ret = appgtt->base.allocate_va_range(&appgtt->base,
 							     vma->node.start,
-							     vma->node.size);
+							     vma->size);
 			if (ret)
 				goto err_pages;
 		}
