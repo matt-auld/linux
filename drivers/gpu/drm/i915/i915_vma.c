@@ -427,6 +427,8 @@ i915_vma_insert(struct i915_vma *vma, u64 size, u64 alignment, u64 flags)
 {
 	struct drm_i915_private *dev_priv = vma->vm->i915;
 	struct drm_i915_gem_object *obj = vma->obj;
+	u64 requested_alignment;
+	u64 requested_size;
 	u64 start, end;
 	int ret;
 
@@ -471,6 +473,9 @@ i915_vma_insert(struct i915_vma *vma, u64 size, u64 alignment, u64 flags)
 	if (ret)
 		return ret;
 
+	requested_alignment = alignment;
+	requested_size = size;
+
 	if (i915_vm_is_48bit(vma->vm) &&
 	    obj->gtt_page_size > I915_GTT_PAGE_SIZE) {
 		unsigned int page_alignment = obj->gtt_page_size;
@@ -488,6 +493,7 @@ i915_vma_insert(struct i915_vma *vma, u64 size, u64 alignment, u64 flags)
 		GEM_BUG_ON(!IS_ALIGNED(size, page_alignment));
 	}
 
+retry_insert:
 	if (flags & PIN_OFFSET_FIXED) {
 		u64 offset = flags & PIN_OFFSET_MASK;
 		if (!IS_ALIGNED(offset, alignment) ||
@@ -522,6 +528,19 @@ i915_vma_insert(struct i915_vma *vma, u64 size, u64 alignment, u64 flags)
 	return 0;
 
 err_unpin:
+	/* We try to use huge-gtt-pages whenever we can, but part of the cost
+	 * is that we may need adjust the alignment and possibly the size
+	 * before we insert into a vm, and so we should always fallback and
+	 * retry without huge-gtt-pages if we ever encounter a failure, before
+	 * giving up.
+	 */
+	if (alignment > requested_alignment || size > requested_size) {
+		obj->gtt_page_size = I915_GTT_PAGE_SIZE;
+		alignment = requested_alignment;
+		size = requested_size;
+		goto retry_insert;
+	}
+
 	i915_gem_object_unpin_pages(obj);
 	return ret;
 }
