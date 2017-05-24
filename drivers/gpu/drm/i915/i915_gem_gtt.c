@@ -832,6 +832,7 @@ static void gen8_ppgtt_clear_4lvl(struct i915_address_space *vm,
 struct sgt_dma {
 	struct scatterlist *sg;
 	dma_addr_t dma, max;
+	unsigned int page_size;
 };
 
 struct gen8_insert_pte {
@@ -861,7 +862,8 @@ gen8_ppgtt_insert_1G_entries(struct i915_hw_ppgtt *ppgtt,
 	const gen8_pte_t pdpe_encode = gen8_pte_encode(GEN8_PDPE_PS_1G,
 						       cache_level);
 	gen8_pte_t *vaddr;
-	bool ret;
+	dma_addr_t remaining;
+	bool ret = false;
 
 	GEM_BUG_ON(idx->pte);
 	GEM_BUG_ON(idx->pde);
@@ -883,9 +885,22 @@ gen8_ppgtt_insert_1G_entries(struct i915_hw_ppgtt *ppgtt,
 
 		if (++idx->pdpe == GEN8_PML4ES_PER_PML4) {
 			idx->pdpe = 0;
+			idx->pml4e++;
 			ret = true;
-			break;
 		}
+
+		remaining = iter->max - iter->dma;
+		if (remaining < I915_GTT_PAGE_SIZE_1G) {
+			if (remaining >= I915_GTT_PAGE_SIZE_2M)
+				iter->page_size = I915_GTT_PAGE_SIZE_2M;
+			else
+				iter->page_size = I915_GTT_PAGE_SIZE;
+
+			ret = true;
+		}
+
+		if (ret)
+			break;
 
 	} while (1);
 	kunmap_atomic(vaddr);
@@ -905,7 +920,8 @@ gen8_ppgtt_insert_2M_entries(struct i915_hw_ppgtt *ppgtt,
 	const gen8_pte_t pde_encode = gen8_pte_encode(GEN8_PDE_PS_2M,
 						      cache_level);
 	gen8_pte_t *vaddr;
-	bool ret;
+	dma_addr_t remaining;
+	bool ret = false;
 
 	GEM_BUG_ON(idx->pte);
 	GEM_BUG_ON(idx->pdpe >= i915_pdpes_per_pdp(&ppgtt->base));
@@ -924,18 +940,33 @@ gen8_ppgtt_insert_2M_entries(struct i915_hw_ppgtt *ppgtt,
 			iter->max = iter->dma + iter->sg->length;
 		}
 
+		remaining = iter->max - iter->dma;
+
 		if (++idx->pde == I915_PDES) {
 			idx->pde = 0;
 
 			if (++idx->pdpe == GEN8_PML4ES_PER_PML4) {
 				idx->pdpe = 0;
+				idx->pml4e++;
 				ret = true;
-				break;
+			}
+
+			if (unlikely(remaining >= I915_GTT_PAGE_SIZE_1G)) {
+				iter->page_size = I915_GTT_PAGE_SIZE;
+				ret = true;
 			}
 
 			kunmap_atomic(vaddr);
 			vaddr = kmap_atomic_px(pdp->page_directory[idx->pdpe]);
 		}
+
+		if (remaining < I915_GTT_PAGE_SIZE_2M) {
+			iter->page_size = I915_GTT_PAGE_SIZE;
+			ret = true;
+		}
+
+		if (ret)
+			break;
 
 	} while (1);
 	kunmap_atomic(vaddr);
@@ -993,6 +1024,7 @@ gen8_ppgtt_insert_64K_entries(struct i915_hw_ppgtt *ppgtt,
 
 				if (++idx->pdpe == GEN8_PML4ES_PER_PML4) {
 					idx->pdpe = 0;
+					idx->pml4e++;
 					ret = true;
 					break;
 				}
@@ -1054,6 +1086,7 @@ gen8_ppgtt_insert_pte_entries(struct i915_hw_ppgtt *ppgtt,
 				/* Limited by sg length for 3lvl */
 				if (++idx->pdpe == GEN8_PML4ES_PER_PML4) {
 					idx->pdpe = 0;
+					idx->pml4e++;
 					ret = true;
 					break;
 				}
@@ -1097,11 +1130,14 @@ static void gen8_ppgtt_insert_4lvl(struct i915_address_space *vm,
 				   enum i915_cache_level cache_level,
 				   u32 unused)
 {
+	struct drm_i915_private *i915 = vm->i915;
+	unsigned long supported = INTEL_INFO(i915)->page_size_mask;
 	struct i915_hw_ppgtt *ppgtt = i915_vm_to_ppgtt(vm);
 	struct sgt_dma iter = {
 		.sg = pages->sgl,
 		.dma = sg_dma_address(iter.sg),
 		.max = iter.dma + iter.sg->length,
+		.page_size = page_sizes,
 	};
 	struct i915_page_directory_pointer **pdps = ppgtt->pml4.pdps;
 	struct gen8_insert_pte idx = gen8_insert_pte(start);
@@ -1111,23 +1147,41 @@ static void gen8_ppgtt_insert_4lvl(struct i915_address_space *vm,
 			       struct gen8_insert_pte *idx,
 			       enum i915_cache_level cache_level);
 
-	switch (page_sizes) {
-	case I915_GTT_PAGE_SIZE_1G:
-		insert_entries = gen8_ppgtt_insert_1G_entries;
-		break;
-	case I915_GTT_PAGE_SIZE_2M:
-		insert_entries = gen8_ppgtt_insert_2M_entries;
-		break;
-	case I915_GTT_PAGE_SIZE_64K:
-		insert_entries = gen8_ppgtt_insert_64K_entries;
-		break;
-	default:
-		insert_entries = gen8_ppgtt_insert_pte_entries;
+	if (!is_power_of_2(page_sizes)) {
+		int bit;
+
+		for_each_set_bit(bit, &supported, BITS_PER_LONG) {
+			if (!IS_ALIGNED(start, BIT(bit)) ||
+			    iter.sg->length < BIT(bit))
+				break;
+
+			iter.page_size = BIT(bit);
+		}
+
+		GEM_BUG_ON(iter.page_size == page_sizes);
 	}
 
-	while (insert_entries(ppgtt, pdps[idx.pml4e++], &iter, &idx,
-			      cache_level))
+	do {
+		switch(iter.page_size & supported) {
+		case I915_GTT_PAGE_SIZE_1G:
+			insert_entries = gen8_ppgtt_insert_1G_entries;
+			break;
+		case I915_GTT_PAGE_SIZE_2M:
+			insert_entries = gen8_ppgtt_insert_2M_entries;
+			break;
+		case I915_GTT_PAGE_SIZE_64K:
+			/* We don't support 64K in mixed mode */
+			if (page_sizes == I915_GTT_PAGE_SIZE_64K)
+				insert_entries = gen8_ppgtt_insert_64K_entries;
+			/* fallthrough */
+		default:
+			insert_entries = gen8_ppgtt_insert_pte_entries;
+		}
+
 		GEM_BUG_ON(idx.pml4e >= GEN8_PML4ES_PER_PML4);
+
+	} while (insert_entries(ppgtt, pdps[idx.pml4e], &iter, &idx,
+				cache_level));
 }
 
 static void gen8_free_page_tables(struct i915_address_space *vm,
