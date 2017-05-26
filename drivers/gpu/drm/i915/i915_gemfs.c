@@ -50,6 +50,27 @@ int i915_gemfs_create(struct drm_i915_private *i915)
 	if (IS_ERR(gemfs_mnt))
 		return PTR_ERR(gemfs_mnt);
 
+#if defined(CONFIG_TRANSPARENT_HUGE_PAGECACHE)
+	if (has_transparent_hugepage()) {
+		struct super_block *sb = gemfs_mnt->mnt_sb;
+		char options[] = "huge=within_size";
+		int flags = 0;
+		int ret;
+
+		/* Idealy we would just pass the mount options when mounting,
+		 * but for some reason shmem chooses not to parse the options
+		 * for MS_KERNMOUNT, probably because shm_mnt is the only tmpfs
+		 * kernel mount other than this, where the mount options aren't
+		 * used. To workaround this we do a remount, which is fairly
+		 * inexpensive, where we know the options are never igonored.
+		 */
+		ret = sb->s_op->remount_fs(sb, &flags, options);
+		if (ret) {
+			kern_unmount(gemfs_mnt);
+			return ret;
+		}
+	}
+#endif
 	i915->gemfs_mnt = gemfs_mnt;
 
 	return 0;
