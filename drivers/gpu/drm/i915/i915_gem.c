@@ -35,6 +35,7 @@
 #include "intel_drv.h"
 #include "intel_frontbuffer.h"
 #include "intel_mocs.h"
+#include "i915_gemfs.h"
 #include <linux/dma-fence-array.h>
 #include <linux/kthread.h>
 #include <linux/reservation.h>
@@ -4288,6 +4289,25 @@ static const struct drm_i915_gem_object_ops i915_gem_object_ops = {
 	.pwrite = i915_gem_object_pwrite_gtt,
 };
 
+static int i915_gem_object_create_shmem(struct drm_device *dev,
+					struct drm_gem_object *obj,
+					size_t size)
+{
+	struct drm_i915_private *i915 = to_i915(dev);
+	struct file *filp;
+
+	drm_gem_private_object_init(dev, obj, size);
+
+	filp = shmem_file_setup_with_mnt(i915->mm.gemfs, "i915", size,
+					 VM_NORESERVE);
+	if (IS_ERR(filp))
+		return PTR_ERR(filp);
+
+	obj->filp = filp;
+
+	return 0;
+}
+
 struct drm_i915_gem_object *
 i915_gem_object_create(struct drm_i915_private *dev_priv, u64 size)
 {
@@ -4312,7 +4332,7 @@ i915_gem_object_create(struct drm_i915_private *dev_priv, u64 size)
 	if (obj == NULL)
 		return ERR_PTR(-ENOMEM);
 
-	ret = drm_gem_object_init(&dev_priv->drm, &obj->base, size);
+	ret = i915_gem_object_create_shmem(&dev_priv->drm, &obj->base, size);
 	if (ret)
 		goto fail;
 
@@ -4887,7 +4907,13 @@ i915_gem_load_init_fences(struct drm_i915_private *dev_priv)
 int
 i915_gem_load_init(struct drm_i915_private *dev_priv)
 {
-	int err = -ENOMEM;
+	int err;
+
+	err = i915_gemfs_init(dev_priv);
+	if (err)
+		return err;
+
+	err = -ENOMEM;
 
 	dev_priv->objects = KMEM_CACHE(drm_i915_gem_object, SLAB_HWCACHE_ALIGN);
 	if (!dev_priv->objects)
@@ -4957,6 +4983,8 @@ err_vmas:
 err_objects:
 	kmem_cache_destroy(dev_priv->objects);
 err_out:
+	i915_gemfs_fini(dev_priv);
+
 	return err;
 }
 
@@ -4980,6 +5008,8 @@ void i915_gem_load_cleanup(struct drm_i915_private *dev_priv)
 
 	/* And ensure that our DESTROY_BY_RCU slabs are truly destroyed */
 	rcu_barrier();
+
+	i915_gemfs_fini(dev_priv);
 }
 
 int i915_gem_freeze(struct drm_i915_private *dev_priv)
