@@ -24,6 +24,7 @@
 
 #include <linux/fs.h>
 #include <linux/mount.h>
+#include <linux/pagemap.h>
 
 #include "i915_drv.h"
 #include "i915_gemfs.h"
@@ -40,6 +41,20 @@ int i915_gemfs_init(struct drm_i915_private *i915)
 	gemfs = kern_mount(type);
 	if (IS_ERR(gemfs))
 		return PTR_ERR(gemfs);
+
+	if (has_transparent_hugepage()) {
+		struct super_block *sb = gemfs->mnt_sb;
+		char options[] = "huge=within_size";
+		int flags = 0;
+
+		/* We don't consider failure to remount fatal, since this should
+		 * only ever attempt to modify the mount options of the sb, and
+		 * so should always leave us with a working mount upon failure.
+		 * Hence decoupling this from the actual kern_mount is probably
+		 * advisable.
+		 */
+		WARN_ON(sb->s_op->remount_fs(sb, &flags, options));
+	}
 
 	i915->mm.gemfs = gemfs;
 
