@@ -80,6 +80,8 @@ static void mock_device_release(struct drm_device *dev)
 	kmem_cache_destroy(i915->vmas);
 	kmem_cache_destroy(i915->objects);
 
+	i915_gemfs_destroy(i915->gemfs_mnt);
+
 	drm_dev_fini(&i915->drm);
 	put_device(&i915->drm.pdev->dev);
 }
@@ -167,9 +169,15 @@ struct drm_i915_private *mock_gem_device(void)
 
 	i915->gt.awake = true;
 
+	i915->gemfs_mnt = i915_gemfs_create();
+	if (IS_ERR(i915->gemfs_mnt)) {
+		err = PTR_ERR(i915->gemfs_mnt);
+		goto err_wq;
+	}
+
 	i915->objects = KMEM_CACHE(mock_object, SLAB_HWCACHE_ALIGN);
 	if (!i915->objects)
-		goto err_wq;
+		goto err_gemfs;
 
 	i915->vmas = KMEM_CACHE(i915_vma, SLAB_HWCACHE_ALIGN);
 	if (!i915->vmas)
@@ -227,6 +235,8 @@ err_vmas:
 	kmem_cache_destroy(i915->vmas);
 err_objects:
 	kmem_cache_destroy(i915->objects);
+err_gemfs:
+	i915_gemfs_destroy(i915->gemfs_mnt);
 err_wq:
 	destroy_workqueue(i915->wq);
 put_device:

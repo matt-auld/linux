@@ -2227,6 +2227,9 @@ struct drm_i915_private {
 	DECLARE_HASHTABLE(mm_structs, 7);
 	struct mutex mm_lock;
 
+	/* Our tmpfs instance used for shmem backed objects */
+	struct vfsmount *gemfs_mnt;
+
 	/* The hw wants to have a stable context identifier for the lifetime
 	 * of the context (for OA, PASID, faults, etc). This is limited
 	 * in execlists to 21 bits.
@@ -4168,5 +4171,15 @@ static inline bool i915_gem_object_is_coherent(struct drm_i915_gem_object *obj)
 	return (obj->cache_level != I915_CACHE_NONE ||
 		HAS_LLC(to_i915(obj->base.dev)));
 }
+
+/* i915_gemfs.c */
+struct vfsmount *i915_gemfs_create(void);
+
+void i915_gemfs_destroy(struct vfsmount *gemfs_mnt);
+
+struct file *i915_gemfs_file_setup(struct vfsmount *gemfs_mnt,
+				   const char *name, size_t size);
+
+int i915_gemfs_unlink(struct file *filp);
 
 #endif

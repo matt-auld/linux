@@ -4245,6 +4245,24 @@ static const struct drm_i915_gem_object_ops i915_gem_object_ops = {
 	.pwrite = i915_gem_object_pwrite_gtt,
 };
 
+static int i915_drm_gem_object_init(struct drm_device *dev,
+				    struct drm_gem_object *obj,
+				    size_t size)
+{
+	struct drm_i915_private *i915 = to_i915(dev);
+	struct file *filp;
+
+	drm_gem_private_object_init(dev, obj, size);
+
+	filp = i915_gemfs_file_setup(i915->gemfs_mnt, "i915 mm object", size);
+	if (IS_ERR(filp))
+		return PTR_ERR(filp);
+
+	obj->filp = filp;
+
+	return 0;
+}
+
 struct drm_i915_gem_object *
 i915_gem_object_create(struct drm_i915_private *dev_priv, u64 size)
 {
@@ -4268,7 +4286,7 @@ i915_gem_object_create(struct drm_i915_private *dev_priv, u64 size)
 	if (obj == NULL)
 		return ERR_PTR(-ENOMEM);
 
-	ret = drm_gem_object_init(&dev_priv->drm, &obj->base, size);
+	ret = i915_drm_gem_object_init(&dev_priv->drm, &obj->base, size);
 	if (ret)
 		goto fail;
 
@@ -4383,6 +4401,9 @@ static void __i915_gem_free_objects(struct drm_i915_private *i915,
 			drm_prime_gem_destroy(&obj->base, NULL);
 
 		reservation_object_fini(&obj->__builtin_resv);
+
+		if (obj->base.filp)
+			i915_gemfs_unlink(obj->base.filp);
 		drm_gem_object_release(&obj->base);
 		i915_gem_info_remove_obj(i915, obj->base.size);
 
@@ -4843,6 +4864,10 @@ i915_gem_load_init(struct drm_i915_private *dev_priv)
 {
 	int err = -ENOMEM;
 
+	dev_priv->gemfs_mnt = i915_gemfs_create();
+	if (IS_ERR(dev_priv->gemfs_mnt))
+		return PTR_ERR(dev_priv->gemfs_mnt);
+
 	dev_priv->objects = KMEM_CACHE(drm_i915_gem_object, SLAB_HWCACHE_ALIGN);
 	if (!dev_priv->objects)
 		goto err_out;
@@ -4908,6 +4933,7 @@ err_vmas:
 err_objects:
 	kmem_cache_destroy(dev_priv->objects);
 err_out:
+	i915_gemfs_destroy(dev_priv->gemfs_mnt);
 	return err;
 }
 
@@ -4930,6 +4956,8 @@ void i915_gem_load_cleanup(struct drm_i915_private *dev_priv)
 
 	/* And ensure that our DESTROY_BY_RCU slabs are truly destroyed */
 	rcu_barrier();
+
+	i915_gemfs_destroy(dev_priv->gemfs_mnt);
 }
 
 int i915_gem_freeze(struct drm_i915_private *dev_priv)
