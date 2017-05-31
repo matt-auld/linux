@@ -129,9 +129,11 @@ struct drm_i915_gem_object {
 		struct sg_table *pages;
 		void *mapping;
 
+		/* TODO: whack some of this into the error state */
 		struct i915_page_sizes {
 			unsigned int phys;
 			unsigned int sg;
+			unsigned int gtt;
 		} page_sizes;
 
 		struct i915_gem_object_page_iter {

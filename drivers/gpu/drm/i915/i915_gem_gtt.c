@@ -217,6 +217,8 @@ static int ppgtt_bind_vma(struct i915_vma *vma,
 static void ppgtt_unbind_vma(struct i915_vma *vma)
 {
 	vma->vm->clear_range(vma->vm, vma->node.start, vma->size);
+
+	vma->obj->mm.page_sizes.gtt = 0;
 }
 
 static gen8_pte_t gen8_pte_encode(dma_addr_t addr,
@@ -924,6 +926,8 @@ static void gen8_ppgtt_insert_3lvl(struct i915_address_space *vm,
 
 	gen8_ppgtt_insert_pte_entries(ppgtt, &ppgtt->pdp, &iter, &idx,
 				      cache_level);
+
+	page_sizes->gtt = I915_GTT_PAGE_SIZE;
 }
 
 static void gen8_ppgtt_insert_4lvl(struct i915_address_space *vm,
@@ -971,6 +975,8 @@ static void gen8_ppgtt_insert_4lvl(struct i915_address_space *vm,
 				pd_vaddr[idx.pde] |= GEN8_PDE_IPS_64K;
 			}
 		}
+
+		page_sizes->gtt |= page_size;
 
 		start += page_size;
 		iter.dma += page_size;
@@ -1731,6 +1737,8 @@ static void gen6_ppgtt_insert_entries(struct i915_address_space *vm,
 		}
 	} while (1);
 	kunmap_atomic(vaddr);
+
+	page_sizes->gtt = I915_GTT_PAGE_SIZE;
 }
 
 static int gen6_alloc_va_range(struct i915_address_space *vm,
@@ -2525,6 +2533,8 @@ static void aliasing_gtt_unbind_vma(struct i915_vma *vma)
 		struct i915_address_space *vm = &i915->mm.aliasing_ppgtt->base;
 
 		vm->clear_range(vm, vma->node.start, vma->size);
+
+		vma->obj->mm.page_sizes.gtt = 0;
 	}
 }
 

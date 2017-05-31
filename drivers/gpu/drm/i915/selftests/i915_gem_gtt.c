@@ -267,6 +267,7 @@ static int lowlevel_hole(struct drm_i915_private *i915,
 
 			GEM_BUG_ON(addr + BIT_ULL(size) > vm->total);
 			vm->clear_range(vm, addr, BIT_ULL(size));
+			obj->mm.page_sizes.gtt = 0;
 		}
 
 		i915_gem_object_unpin_pages(obj);
