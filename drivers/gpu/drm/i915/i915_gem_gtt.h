@@ -149,6 +149,7 @@ typedef u64 gen8_ppgtt_pml4e_t;
 #define GEN8_PPAT_ELLC_OVERRIDE		(0<<2)
 #define GEN8_PPAT(i, x)			((u64)(x) << ((i) * 8))
 
+#define GEN8_PDE_IPS_64K BIT(11)
 #define GEN8_PDE_PS_2M   BIT(7)
 
 #define GEN8_PDPE_PS_1G  BIT(7)
@@ -347,6 +348,12 @@ static inline bool
 i915_vm_is_48bit(const struct i915_address_space *vm)
 {
 	return (vm->total - 1) >> 32;
+}
+
+static inline bool
+i915_vm_has_scratch_64K(struct i915_address_space *vm)
+{
+	return vm->scratch_page.order == get_order(I915_GTT_PAGE_SIZE_64K);
 }
 
 /* The Graphics Translation Table is the way in which GEN hardware translates a
