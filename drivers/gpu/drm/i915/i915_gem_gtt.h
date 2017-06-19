@@ -149,6 +149,8 @@ typedef u64 gen8_ppgtt_pml4e_t;
 #define GEN8_PPAT_ELLC_OVERRIDE		(0<<2)
 #define GEN8_PPAT(i, x)			((u64)(x) << ((i) * 8))
 
+#define GEN8_PDPE_PS_1G  BIT(7)
+
 struct sg_table;
 
 struct intel_rotation_info {
