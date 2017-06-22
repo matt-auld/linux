@@ -226,6 +226,9 @@ static int ppgtt_set_pages(struct i915_vma *vma)
 
 	vma->pages = vma->obj->mm.pages;
 
+	vma->page_sizes.phys = vma->obj->mm.page_sizes.phys;
+	vma->page_sizes.sg = vma->obj->mm.page_sizes.sg;
+
 	return 0;
 }
 
@@ -238,6 +241,8 @@ static void clear_pages(struct i915_vma *vma)
 		kfree(vma->pages);
 	}
 	vma->pages = NULL;
+
+	memset(&vma->page_sizes, 0, sizeof(struct i915_page_sizes));
 }
 
 static gen8_pte_t gen8_pte_encode(dma_addr_t addr,
@@ -2536,6 +2541,9 @@ static int ggtt_set_pages(struct i915_vma *vma)
 	ret = i915_get_ggtt_vma_pages(vma);
 	if (ret)
 		return ret;
+
+	vma->page_sizes.phys = vma->obj->mm.page_sizes.phys;
+	vma->page_sizes.sg = vma->obj->mm.page_sizes.sg;
 
 	return 0;
 }
