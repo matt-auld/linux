@@ -336,7 +336,7 @@ int ttm_tt_swapout(struct ttm_tt *ttm, struct file *persistent_swap_storage)
 	BUG_ON(ttm->caching_state != tt_cached);
 
 	if (!persistent_swap_storage) {
-		swap_storage = shmem_file_setup("ttm swap",
+		swap_storage = shmem_file_setup(TMPFS_MNT, "ttm swap",
 						ttm->num_pages << PAGE_SHIFT,
 						0);
 		if (IS_ERR(swap_storage)) {
