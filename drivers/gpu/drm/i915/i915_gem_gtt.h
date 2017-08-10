@@ -212,6 +212,7 @@ struct i915_vma;
 
 struct i915_page_dma {
 	struct page *page;
+	int order;
 	union {
 		dma_addr_t daddr;
 
