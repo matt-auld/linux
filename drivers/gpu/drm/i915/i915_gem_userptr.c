@@ -406,7 +406,8 @@ struct get_pages_work {
 #endif
 
 static int
-st_set_pages(struct sg_table **st, struct page **pvec, int num_pages)
+st_set_pages(struct sg_table **st, struct page **pvec, int num_pages,
+	     unsigned int *sg_mask)
 {
 	struct scatterlist *sg;
 	int ret, n;
@@ -422,12 +423,17 @@ st_set_pages(struct sg_table **st, struct page **pvec, int num_pages)
 
 		for_each_sg((*st)->sgl, sg, num_pages, n)
 			sg_set_page(sg, pvec[n], PAGE_SIZE, 0);
+
+		*sg_mask = PAGE_SIZE;
 	} else {
 		ret = sg_alloc_table_from_pages(*st, pvec, num_pages,
 						0, num_pages << PAGE_SHIFT,
 						GFP_KERNEL);
 		if (ret)
 			goto err;
+
+		for_each_sg((*st)->sgl, sg, num_pages, n)
+			*sg_mask |= sg->length;
 	}
 
 	return 0;
@@ -443,9 +449,10 @@ __i915_gem_userptr_set_pages(struct drm_i915_gem_object *obj,
 			     struct page **pvec, int num_pages)
 {
 	struct sg_table *pages;
+	unsigned int sg_mask = 0;
 	int ret;
 
-	ret = st_set_pages(&pages, pvec, num_pages);
+	ret = st_set_pages(&pages, pvec, num_pages, &sg_mask);
 	if (ret)
 		return ERR_PTR(ret);
 
@@ -456,7 +463,7 @@ __i915_gem_userptr_set_pages(struct drm_i915_gem_object *obj,
 		return ERR_PTR(ret);
 	}
 
-	__i915_gem_object_set_pages(obj, pages);
+	__i915_gem_object_set_pages(obj, pages, sg_mask);
 
 	return pages;
 }

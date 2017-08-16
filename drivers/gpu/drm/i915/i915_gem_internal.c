@@ -49,6 +49,7 @@ static int i915_gem_object_get_pages_internal(struct drm_i915_gem_object *obj)
 	struct drm_i915_private *i915 = to_i915(obj->base.dev);
 	struct sg_table *st;
 	struct scatterlist *sg;
+	unsigned int sg_mask;
 	unsigned int npages;
 	int max_order;
 	gfp_t gfp;
@@ -75,6 +76,7 @@ static int i915_gem_object_get_pages_internal(struct drm_i915_gem_object *obj)
 	}
 
 create_st:
+	sg_mask = 0;
 	st = kmalloc(sizeof(*st), GFP_KERNEL);
 	if (!st)
 		return -ENOMEM;
@@ -104,6 +106,7 @@ create_st:
 		} while (1);
 
 		sg_set_page(sg, page, PAGE_SIZE << order, 0);
+		sg_mask |= PAGE_SIZE << order;
 		st->nents++;
 
 		npages -= 1 << order;
@@ -132,7 +135,7 @@ create_st:
 	 */
 	obj->mm.madv = I915_MADV_DONTNEED;
 
-	__i915_gem_object_set_pages(obj, st);
+	__i915_gem_object_set_pages(obj, st, sg_mask);
 
 	return 0;
 
