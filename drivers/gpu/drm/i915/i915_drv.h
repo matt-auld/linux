@@ -3084,6 +3084,8 @@ intel_info(const struct drm_i915_private *dev_priv)
 #define USES_PPGTT(dev_priv)		(i915.enable_ppgtt)
 #define USES_FULL_PPGTT(dev_priv)	(i915.enable_ppgtt >= 2)
 #define USES_FULL_48BIT_PPGTT(dev_priv)	(i915.enable_ppgtt == 3)
+#define HAS_PAGE_SIZES(dev_priv, sizes) \
+	((sizes) && (((sizes) & ~(dev_priv)->info.page_sizes)) == 0)
 
 #define HAS_OVERLAY(dev_priv)		 ((dev_priv)->info.has_overlay)
 #define OVERLAY_NEEDS_PHYSICAL(dev_priv) \
@@ -3498,7 +3500,8 @@ i915_gem_object_get_dma_address(struct drm_i915_gem_object *obj,
 				unsigned long n);
 
 void __i915_gem_object_set_pages(struct drm_i915_gem_object *obj,
-				 struct sg_table *pages);
+				 struct sg_table *pages,
+				 unsigned int sg_mask);
 int __i915_gem_object_get_pages(struct drm_i915_gem_object *obj);
 
 static inline int __must_check
