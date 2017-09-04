@@ -24,6 +24,7 @@
 
 #include <linux/fs.h>
 #include <linux/mount.h>
+#include <linux/pagemap.h>
 
 #include "i915_drv.h"
 #include "i915_gemfs.h"
@@ -40,6 +41,19 @@ int i915_gemfs_init(struct drm_i915_private *i915)
 	gemfs = kern_mount(type);
 	if (IS_ERR(gemfs))
 		return PTR_ERR(gemfs);
+
+	if (has_transparent_hugepage()) {
+		struct super_block *sb = gemfs->mnt_sb;
+		char options[] = "huge=within_size";
+		int flags = 0;
+		int err;
+
+		err = sb->s_op->remount_fs(sb, &flags, options);
+		if (err) {
+			kern_unmount(gemfs);
+			return err;
+		}
+	}
 
 	i915->mm.gemfs = gemfs;
 
