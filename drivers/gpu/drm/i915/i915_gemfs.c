@@ -24,6 +24,7 @@
 
 #include <linux/fs.h>
 #include <linux/mount.h>
+#include <linux/pagemap.h>
 
 #include "i915_drv.h"
 #include "i915_gemfs.h"
@@ -32,12 +33,24 @@ int i915_gemfs_init(struct drm_i915_private *i915)
 {
 	struct file_system_type *type;
 	struct vfsmount *gemfs;
+	char within_size[] = "huge=within_size";
+	char *options = NULL;
 
 	type = get_fs_type("tmpfs");
 	if (!type)
 		return -ENODEV;
 
-	gemfs = kern_mount(type);
+	/*
+	 * Enable huge-pages for objects that are at least HPAGE_SIZE, usually
+	 * 2M. Note that within_size may overallocate huge-pages, if say we
+	 * allocate an object of 2M + 4K, but under memory pressure should split
+	 * any huge-pages which can be shrunk.
+	 */
+
+	if (has_transparent_hugepage())
+		options = within_size;
+
+	gemfs = kern_mount_data(type, options);
 	if (IS_ERR(gemfs))
 		return PTR_ERR(gemfs);
 
