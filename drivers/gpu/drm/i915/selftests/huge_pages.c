@@ -1239,8 +1239,8 @@ static int igt_ppgtt_internal_huge(void *arg)
 	int i;
 	int err;
 
-	/* Sanity check that the HW uses huge pages correctly through gemfs --
-	 * ensure that our writes land in the right place.
+	/* Sanity check that the HW uses huge pages correctly through internal
+	 * -- ensure that our writes land in the right place.
 	 */
 
 	if (!intel_engine_can_store_dword(i915->engine[RCS])) {
@@ -1305,14 +1305,14 @@ static int igt_ppgtt_gemfs_huge(void *arg)
 	int i;
 	int err;
 
+	/* Sanity check that the HW uses huge pages correctly through gemfs --
+	 * ensure that our writes land in the right place.
+	 */
+
 	if (!igt_can_allocate_thp(i915)) {
 		pr_info("missing THP support, skipping\n");
 		return 0;
 	}
-
-	/* Sanity check that the HW uses huge pages correctly through gemfs --
-	 * ensure that our writes land in the right place.
-	 */
 
 	if (!intel_engine_can_store_dword(i915->engine[RCS])) {
 		pr_info("store-dword-imm not supported, skipping\n");
