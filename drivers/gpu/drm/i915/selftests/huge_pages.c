@@ -25,6 +25,7 @@
 #include "../i915_selftest.h"
 
 #include <linux/prime_numbers.h>
+#include <linux/hugetlb.h>
 
 #include "mock_drm.h"
 
@@ -66,6 +67,7 @@ static void huge_pages_free_pages(struct sg_table *st)
 static int get_huge_pages(struct drm_i915_gem_object *obj)
 {
 #define GFP (GFP_KERNEL | __GFP_NOWARN | __GFP_NORETRY)
+	struct drm_i915_private *i915 = to_i915(obj->base.dev);
 	unsigned int page_mask = obj->mm.page_mask;
 	struct sg_table *st;
 	struct scatterlist *sg;
@@ -98,8 +100,12 @@ static int get_huge_pages(struct drm_i915_gem_object *obj)
 		do {
 			struct page *page;
 
-			GEM_BUG_ON(order >= MAX_ORDER);
-			page = alloc_pages(GFP | __GFP_ZERO, order);
+			if (page_size == I915_GTT_PAGE_SIZE_1G) {
+				page = i915->mm.god_page;
+			} else {
+				GEM_BUG_ON(order >= MAX_ORDER);
+				page = alloc_pages(GFP | __GFP_ZERO, order);
+			}
 			if (!page)
 				goto err;
 
@@ -1141,10 +1147,11 @@ static int igt_ppgtt_exhaust_huge(void *arg)
 	 * ensuring that our writes lands in the right place.
 	 */
 
+	from = ilog2(I915_GTT_PAGE_SIZE_2M);
 	last = ilog2(I915_GTT_PAGE_SIZE_1G);
 
 	n = 0;
-	for_each_set_bit(i, &supported, last)
+	for_each_set_bit_from(from, &supported, last + 1)
 		pages[n++] = BIT(i);
 
 	for (size_mask = 2; size_mask < BIT(n); size_mask++) {
@@ -1624,8 +1631,39 @@ int i915_gem_huge_page_live_selftests(struct drm_i915_private *dev_priv)
 		SUBTEST(igt_ppgtt_pin_update),
 		SUBTEST(igt_shrink_thp),
 	};
+	struct vm_area_struct pseudo_vma;
+	struct user_struct *user = NULL;
+	struct file *file;
+	struct page *page;
 	int err;
 
+	file = hugetlb_file_setup(HUGETLB_ANON_FILE, SZ_1G, VM_NORESERVE, &user,
+				  HUGETLB_ANONHUGE_INODE,
+				  (HUGETLB_FLAG_ENCODE_1GB >>
+				   HUGETLB_FLAG_ENCODE_SHIFT) & 
+				  HUGETLB_FLAG_ENCODE_MASK);
+	if (IS_ERR_OR_NULL(file)) {
+		err = PTR_ERR(file);
+		pr_err("failed to sdf create huge file %d\n", err);
+		return err;
+	}
+
+	memset(&pseudo_vma, 0, sizeof(struct vm_area_struct));
+	pseudo_vma.vm_flags = (VM_HUGETLB | VM_MAYSHARE | VM_SHARED);
+	pseudo_vma.vm_file = file;
+
+	page = alloc_huge_page(&pseudo_vma, 0, 1);
+	if (IS_ERR(page)) {
+		err = PTR_ERR(page);
+		pr_err("failed to allocate huge-page %d\n", err);
+		return err;
+	}
+
+	__SetPageUptodate(page);
+	put_page(page);
+
+	dev_priv->mm.god_page = page;
+	
 	if (!USES_PPGTT(dev_priv)) {
 		pr_info("PPGTT not supported, skipping live-selftests\n");
 		return 0;
@@ -1634,6 +1672,9 @@ int i915_gem_huge_page_live_selftests(struct drm_i915_private *dev_priv)
 	mutex_lock(&dev_priv->drm.struct_mutex);
 	err = i915_subtests(tests, dev_priv);
 	mutex_unlock(&dev_priv->drm.struct_mutex);
+
+	free_huge_page(page);
+	fput(file);
 
 	return err;
 }

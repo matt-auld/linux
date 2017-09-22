@@ -1506,6 +1506,8 @@ struct i915_gem_mm {
 	 */
 	struct vfsmount *gemfs;
 
+	I915_SELFTEST_DECLARE(struct page *god_page);
+
 	/** PPGTT used for aliasing the PPGTT with the GTT */
 	struct i915_hw_ppgtt *aliasing_ppgtt;
 

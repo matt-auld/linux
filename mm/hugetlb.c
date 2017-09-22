@@ -1296,6 +1296,7 @@ void free_huge_page(struct page *page)
 	}
 	spin_unlock(&hugetlb_lock);
 }
+EXPORT_SYMBOL_GPL(free_huge_page);
 
 static void prep_new_huge_page(struct hstate *h, struct page *page, int nid)
 {
@@ -2073,6 +2074,7 @@ out_subpool_put:
 	vma_end_reservation(h, vma, addr);
 	return ERR_PTR(-ENOSPC);
 }
+EXPORT_SYMBOL_GPL(alloc_huge_page);
 
 /*
  * alloc_huge_page()'s wrapper which simply returns the page if allocation
