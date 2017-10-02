@@ -4505,12 +4505,13 @@ static void __i915_gem_free_objects(struct drm_i915_private *i915,
 {
 	struct drm_i915_gem_object *obj, *on;
 
-	mutex_lock(&i915->drm.struct_mutex);
 	intel_runtime_pm_get(i915);
-	llist_for_each_entry(obj, freed, freed) {
+	llist_for_each_entry_safe(obj, on, freed, freed) {
 		struct i915_vma *vma, *vn;
 
 		trace_i915_gem_object_destroy(obj);
+
+		mutex_lock(&i915->drm.struct_mutex);
 
 		i915_gem_object_flush_write_domain(obj, ~I915_GEM_DOMAIN_CPU);
 
@@ -4536,13 +4537,8 @@ static void __i915_gem_free_objects(struct drm_i915_private *i915,
 			spin_unlock(&i915->mm.obj_lock);
 		}
 
-	}
-	intel_runtime_pm_put(i915);
-	mutex_unlock(&i915->drm.struct_mutex);
+		mutex_unlock(&i915->drm.struct_mutex);
 
-	cond_resched();
-
-	llist_for_each_entry_safe(obj, on, freed, freed) {
 		GEM_BUG_ON(obj->bind_count);
 		GEM_BUG_ON(obj->userfault_count);
 		GEM_BUG_ON(atomic_read(&obj->frontbuffer_bits));
@@ -4571,7 +4567,11 @@ static void __i915_gem_free_objects(struct drm_i915_private *i915,
 
 		kfree(obj->bit_17);
 		i915_gem_object_free(obj);
+
+		if (on)
+			cond_resched();
 	}
+	intel_runtime_pm_put(i915);
 }
 
 static void i915_gem_flush_free_objects(struct drm_i915_private *i915)
