@@ -1354,6 +1354,21 @@ redirty:
 	return 0;
 }
 
+#ifdef CONFIG_MIGRATION
+static int shmem_migratepage(struct address_space *mapping,
+			     struct page *newpage, struct page *page,
+			     enum migrate_mode mode)
+{
+	struct shmem_dev_info *dev_info = mapping->private_data;
+
+	if (dev_info && dev_info->dev_migratepage)
+		return dev_info->dev_migratepage(mapping, newpage, page,
+				mode, dev_info->dev_private_data);
+
+	return migrate_page(mapping, newpage, page, mode);
+}
+#endif
+
 #if defined(CONFIG_NUMA) && defined(CONFIG_TMPFS)
 static void shmem_show_mpol(struct seq_file *seq, struct mempolicy *mpol)
 {
@@ -3883,7 +3898,7 @@ static const struct address_space_operations shmem_aops = {
 	.write_end	= shmem_write_end,
 #endif
 #ifdef CONFIG_MIGRATION
-	.migratepage	= migrate_page,
+	.migratepage	= shmem_migratepage,
 #endif
 	.error_remove_page = generic_error_remove_page,
 };
