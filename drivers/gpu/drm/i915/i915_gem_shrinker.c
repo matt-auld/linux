@@ -24,6 +24,7 @@
 
 #include <linux/oom.h>
 #include <linux/shmem_fs.h>
+#include <linux/migrate.h>
 #include <linux/slab.h>
 #include <linux/swap.h>
 #include <linux/pci.h>
@@ -574,6 +575,85 @@ out:
 	return NOTIFY_DONE;
 }
 
+#if IS_ENABLED(CONFIG_MIGRATION)
+static bool can_isolate_page(struct drm_i915_gem_object *obj)
+{
+	if (i915_gem_object_is_migrating(obj))
+		return false;
+
+	/* Avoid the migration of page if being actively used by GPU */
+	if (i915_gem_object_is_active(obj) ||
+	    i915_gem_object_is_framebuffer(obj))
+		return false;
+
+	/* Skip the migration for a pinned object */
+	if (atomic_read(&obj->mm.pages_pin_count) > obj->bind_count)
+		return false;
+
+	return !READ_ONCE(obj->pin_global);
+}
+
+static void __i915_gem_migrate_worker(struct work_struct *wrk)
+{
+	struct drm_i915_private *i915 =
+		container_of(wrk, typeof(*i915), mm.migrate_work);
+	struct llist_node *migrate_list = llist_del_all(&i915->mm.migrate_list);
+	struct drm_i915_gem_object *obj, *on;
+
+	intel_runtime_pm_get(i915);
+	llist_for_each_entry_safe(obj, on, migrate_list, freed) {
+		mutex_lock(&i915->drm.struct_mutex);
+		unsafe_drop_pages(obj);
+		i915_gem_object_clear_migrating(obj);
+		mutex_unlock(&i915->drm.struct_mutex);
+
+		i915_gem_object_put(obj);
+	}
+	intel_runtime_pm_put(i915);
+}
+
+static int i915_gem_shrinker_migratepage(struct address_space *mapping,
+					 struct page *newpage,
+					 struct page *page,
+					 enum migrate_mode mode,
+					 void *dev_priv_data)
+{
+	struct drm_i915_private *i915 = dev_priv_data;
+	struct drm_i915_gem_object *obj;
+
+	/*
+	 * Clear the private field of the new target page as it could have a
+	 * stale value in the private field. Otherwise later on if this page
+	 * itself gets migrated, without getting referred by the Driver
+	 * in between, the stale value would cause the i915_migratepage
+	 * function to go for a toss as object pointer is derived from it.
+	 * This should be safe since at the time of migration, private field
+	 * of the new page (which is actually an independent free 4KB page now)
+	 * should be like a don't care for the kernel.
+	 */
+	set_page_private(newpage, 0);
+
+	/*
+	 * Check the page count, if Driver also has a reference then it should
+	 * be more than 2, as shmem will have one reference and one reference
+	 * would have been taken by the migration path itself. So if reference
+	 * is <=2, we can directly invoke the migration function.
+	 */
+	if (!page_private(page) || PageSwapCache(page))
+		return migrate_page(mapping, newpage, page, mode);
+
+	obj = (struct drm_i915_gem_object *)page_private(page);
+	if (can_isolate_page(obj) &&
+	    !i915_gem_object_set_migrating(obj) &&
+	    kref_get_unless_zero(&obj->base.refcount)) {
+		if (llist_add(&obj->freed, &i915->mm.migrate_list))
+			schedule_work(&i915->mm.migrate_work);
+	}
+
+	return -EBUSY;
+}
+#endif
+
 /**
  * i915_gem_shrinker_init - Initialize i915 shrinker
  * @dev_priv: i915 device
@@ -593,6 +673,14 @@ void i915_gem_shrinker_init(struct drm_i915_private *dev_priv)
 
 	dev_priv->mm.vmap_notifier.notifier_call = i915_gem_shrinker_vmap;
 	WARN_ON(register_vmap_purge_notifier(&dev_priv->mm.vmap_notifier));
+
+	init_llist_head(&dev_priv->mm.migrate_list);
+	INIT_WORK(&dev_priv->mm.migrate_work, __i915_gem_migrate_worker);
+
+	dev_priv->mm.shmem_info.dev_private_data = dev_priv;
+#if IS_ENABLED(CONFIG_MIGRATION)
+	dev_priv->mm.shmem_info.dev_migratepage = i915_gem_shrinker_migratepage;
+#endif
 }
 
 /**

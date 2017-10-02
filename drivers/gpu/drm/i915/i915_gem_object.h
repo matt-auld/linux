@@ -135,6 +135,7 @@ struct drm_i915_gem_object {
 	 * activity?
 	 */
 #define I915_BO_ACTIVE_REF 0
+#define I915_BO_MIGRATING 1
 
 	/*
 	 * Is the object to be mapped as read-only to the GPU
@@ -367,6 +368,24 @@ static inline bool
 i915_gem_object_is_active(const struct drm_i915_gem_object *obj)
 {
 	return obj->active_count;
+}
+
+static inline bool
+i915_gem_object_is_migrating(struct drm_i915_gem_object *obj)
+{
+	return test_bit(I915_BO_MIGRATING, &obj->flags);
+}
+
+static inline bool
+i915_gem_object_set_migrating(struct drm_i915_gem_object *obj)
+{
+	return test_and_set_bit(I915_BO_MIGRATING, &obj->flags);
+}
+
+static inline void
+i915_gem_object_clear_migrating(struct drm_i915_gem_object *obj)
+{
+	clear_bit(I915_BO_MIGRATING, &obj->flags);
 }
 
 static inline bool

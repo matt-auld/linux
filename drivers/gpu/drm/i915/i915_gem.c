@@ -2220,6 +2220,7 @@ i915_gem_object_put_pages_gtt(struct drm_i915_gem_object *obj,
 
 		lock_page(page);
 		munlock_vma_page(page);
+		set_page_private(page, 0);
 		unlock_page(page);
 
 		put_page(page);
@@ -2428,6 +2429,7 @@ rebuild_st:
 		last_pfn = page_to_pfn(page);
 
 		lock_page(page);
+		set_page_private(page, (unsigned long)obj);
 		mlock_vma_page(page);
 		unlock_page(page);
 
@@ -2476,6 +2478,7 @@ err_pages:
 	for_each_sgt_page(page, sgt_iter, st) {
 		lock_page(page);
 		munlock_vma_page(page);
+		set_page_private(page, 0);
 		unlock_page(page);
 
 		put_page(page);
@@ -4428,7 +4431,7 @@ i915_gem_object_create(struct drm_i915_private *dev_priv, u64 size)
 	if (ret)
 		goto fail;
 
-	mask = GFP_HIGHUSER | __GFP_RECLAIMABLE;
+	mask = GFP_HIGHUSER_MOVABLE;
 	if (IS_I965GM(dev_priv) || IS_I965G(dev_priv)) {
 		/* 965gm cannot relocate objects above 4GiB. */
 		mask &= ~__GFP_HIGHMEM;
@@ -4438,6 +4441,7 @@ i915_gem_object_create(struct drm_i915_private *dev_priv, u64 size)
 	mapping = obj->base.filp->f_mapping;
 	mapping_set_gfp_mask(mapping, mask);
 	GEM_BUG_ON(!(mapping_gfp_mask(mapping) & __GFP_RECLAIM));
+	shmem_set_device_ops(mapping, &dev_priv->mm.shmem_info);
 
 	i915_gem_object_init(obj, &i915_gem_object_ops);
 

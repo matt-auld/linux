@@ -1478,6 +1478,8 @@ struct intel_l3_parity {
 };
 
 struct i915_gem_mm {
+	struct shmem_dev_info shmem_info;
+
 	/** Memory allocator for GTT stolen memory */
 	struct drm_mm stolen;
 	/** Protects the usage of the GTT stolen memory allocator. This is
@@ -1520,6 +1522,12 @@ struct i915_gem_mm {
 	struct llist_head free_list;
 	struct work_struct free_work;
 	spinlock_t free_lock;
+
+	/**
+	 * List of objects which are pending migration.
+	 */
+	struct llist_head migrate_list;
+	struct work_struct migrate_work;
 
 	/**
 	 * Small stash of WC pages
