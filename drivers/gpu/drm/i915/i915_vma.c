@@ -280,6 +280,7 @@ int i915_vma_bind(struct i915_vma *vma, enum i915_cache_level cache_level,
 void __iomem *i915_vma_pin_iomap(struct i915_vma *vma)
 {
 	void __iomem *ptr;
+	int ret;
 
 	/* Access through the GTT requires the device to be awake. */
 	assert_rpm_wakelock_held(vma->vm->i915);
@@ -303,7 +304,25 @@ void __iomem *i915_vma_pin_iomap(struct i915_vma *vma)
 	}
 
 	__i915_vma_pin(vma);
+
+	ret = i915_vma_get_fence(vma);
+	if (ret) {
+		__i915_vma_unpin(vma);
+		return IO_ERR_PTR(ret);
+	}
+	i915_vma_pin_fence(vma);
+
 	return ptr;
+}
+
+void i915_vma_unpin_iomap(struct i915_vma *vma)
+{
+	lockdep_assert_held(&vma->obj->base.dev->struct_mutex);
+
+	GEM_BUG_ON(vma->iomap == NULL);
+
+	i915_vma_unpin_fence(vma);
+	i915_vma_unpin(vma);
 }
 
 void i915_vma_unpin_and_release(struct i915_vma **p_vma)
