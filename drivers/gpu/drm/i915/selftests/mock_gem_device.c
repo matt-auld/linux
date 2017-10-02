@@ -67,6 +67,9 @@ static void mock_device_release(struct drm_device *dev)
 	i915_gem_contexts_fini(i915);
 	mutex_unlock(&i915->drm.struct_mutex);
 
+	drain_delayed_work(&i915->mm.gtt_wakeref.work);
+	WARN_ON(atomic_read(&i915->mm.gtt_wakeref.count) != -1);
+
 	drain_workqueue(i915->wq);
 	i915_gem_drain_freed_objects(i915);
 
@@ -173,6 +176,7 @@ struct drm_i915_private *mock_gem_device(void)
 	drm_mode_config_init(&i915->drm);
 
 	mkwrite_device_info(i915)->gen = -1;
+	mkwrite_device_info(i915)->has_llc = true;
 
 	mkwrite_device_info(i915)->page_sizes =
 		I915_GTT_PAGE_SIZE_4K |
@@ -188,6 +192,8 @@ struct drm_i915_private *mock_gem_device(void)
 	i915->wq = alloc_ordered_workqueue("mock", 0);
 	if (!i915->wq)
 		goto put_device;
+
+	i915_gem_load_init__wakeref(i915);
 
 	INIT_WORK(&i915->mm.free_work, __i915_gem_free_work);
 	init_llist_head(&i915->mm.free_list);

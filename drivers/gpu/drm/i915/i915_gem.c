@@ -240,6 +240,7 @@ err_phys:
 
 static void __start_cpu_write(struct drm_i915_gem_object *obj)
 {
+	GEM_BUG_ON(obj->base.write_domain & ~I915_GEM_DOMAIN_CPU);
 	obj->base.read_domains = I915_GEM_DOMAIN_CPU;
 	obj->base.write_domain = I915_GEM_DOMAIN_CPU;
 	if (cpu_write_needs_clflush(obj))
@@ -672,10 +673,13 @@ fb_write_origin(struct drm_i915_gem_object *obj, unsigned int domain)
 		obj->frontbuffer_ggtt_origin : ORIGIN_CPU);
 }
 
-static void
-flush_write_domain(struct drm_i915_gem_object *obj, unsigned int flush_domains)
+void
+i915_gem_object_flush_write_domain(struct drm_i915_gem_object *obj,
+				   unsigned int flush_domains)
 {
 	struct drm_i915_private *dev_priv = to_i915(obj->base.dev);
+
+	lockdep_assert_held(&dev_priv->drm.struct_mutex);
 
 	if (!(obj->base.write_domain & flush_domains))
 		return;
@@ -699,16 +703,19 @@ flush_write_domain(struct drm_i915_gem_object *obj, unsigned int flush_domains)
 
 	switch (obj->base.write_domain) {
 	case I915_GEM_DOMAIN_GTT:
-		if (!HAS_LLC(dev_priv)) {
-			intel_runtime_pm_get(dev_priv);
-			spin_lock_irq(&dev_priv->uncore.lock);
-			POSTING_READ_FW(RING_HEAD(dev_priv->engine[RCS]->mmio_base));
-			spin_unlock_irq(&dev_priv->uncore.lock);
-			intel_runtime_pm_put(dev_priv);
-		}
+		mutex_lock(&dev_priv->mm.gtt_wakeref.lock);
+		if (!list_empty(&obj->mm.gtt_wakeref_link)) {
+			if (!HAS_LLC(dev_priv)) {
+				spin_lock_irq(&dev_priv->uncore.lock);
+				POSTING_READ_FW(RING_HEAD(dev_priv->engine[RCS]->mmio_base));
+				spin_unlock_irq(&dev_priv->uncore.lock);
+			}
 
-		intel_fb_obj_flush(obj,
-				   fb_write_origin(obj, I915_GEM_DOMAIN_GTT));
+			intel_fb_obj_flush(obj, fb_write_origin(obj, I915_GEM_DOMAIN_GTT));
+
+			list_del_init(&obj->mm.gtt_wakeref_link);
+		}
+		mutex_unlock(&dev_priv->mm.gtt_wakeref.lock);
 		break;
 
 	case I915_GEM_DOMAIN_CPU:
@@ -813,7 +820,7 @@ int i915_gem_obj_prepare_shmem_read(struct drm_i915_gem_object *obj,
 			goto out;
 	}
 
-	flush_write_domain(obj, ~I915_GEM_DOMAIN_CPU);
+	i915_gem_object_flush_write_domain(obj, ~I915_GEM_DOMAIN_CPU);
 
 	/* If we're not in the cpu read domain, set ourself into the gtt
 	 * read domain and manually flush cachelines (if required). This
@@ -866,7 +873,7 @@ int i915_gem_obj_prepare_shmem_write(struct drm_i915_gem_object *obj,
 			goto out;
 	}
 
-	flush_write_domain(obj, ~I915_GEM_DOMAIN_CPU);
+	i915_gem_object_flush_write_domain(obj, ~I915_GEM_DOMAIN_CPU);
 
 	/* If we're not in the cpu write domain, set ourself into the
 	 * gtt write domain and manually flush cachelines (as required).
@@ -3423,9 +3430,10 @@ static void __i915_gem_object_flush_for_display(struct drm_i915_gem_object *obj)
 	 * We manually flush the CPU domain so that we can override and
 	 * force the flush for the display, and perform it asyncrhonously.
 	 */
-	flush_write_domain(obj, ~I915_GEM_DOMAIN_CPU);
+	i915_gem_object_flush_write_domain(obj, ~I915_GEM_DOMAIN_CPU);
 	if (obj->cache_dirty)
 		i915_gem_clflush_object(obj, I915_CLFLUSH_FORCE);
+	GEM_BUG_ON(obj->base.write_domain & ~I915_GEM_DOMAIN_CPU);
 	obj->base.write_domain = 0;
 }
 
@@ -3478,7 +3486,7 @@ i915_gem_object_set_to_wc_domain(struct drm_i915_gem_object *obj, bool write)
 	if (ret)
 		return ret;
 
-	flush_write_domain(obj, ~I915_GEM_DOMAIN_WC);
+	i915_gem_object_flush_write_domain(obj, ~I915_GEM_DOMAIN_WC);
 
 	/* Serialise direct access to this object with the barriers for
 	 * coherent writes from the GPU, by effectively invalidating the
@@ -3502,6 +3510,49 @@ i915_gem_object_set_to_wc_domain(struct drm_i915_gem_object *obj, bool write)
 	return 0;
 }
 
+static void wakeref_timeout(struct work_struct *work)
+{
+	struct drm_i915_private *dev_priv =
+		container_of(work, typeof(*dev_priv), mm.gtt_wakeref.work.work);
+	struct drm_i915_gem_object *obj, *on;
+	unsigned int count;
+
+	mutex_lock(&dev_priv->mm.gtt_wakeref.lock);
+	count = atomic_xchg(&dev_priv->mm.gtt_wakeref.count, 0);
+	if (count) {
+		unsigned long timeout;
+
+		GEM_BUG_ON(count == -1);
+
+		if (INTEL_GEN(dev_priv) >= 6 && !HAS_LLC(dev_priv)) {
+			spin_lock_irq(&dev_priv->uncore.lock);
+			POSTING_READ_FW(RING_ACTHD(dev_priv->engine[RCS]->mmio_base));
+			spin_unlock_irq(&dev_priv->uncore.lock);
+		}
+
+		timeout = 0;
+		list_for_each_entry_safe(obj, on,
+					 &dev_priv->mm.gtt_wakeref.list,
+					 mm.gtt_wakeref_link) {
+			list_del_init(&obj->mm.gtt_wakeref_link);
+			if (obj->base.write_domain & I915_GEM_DOMAIN_GTT) {
+				intel_fb_obj_flush(obj, fb_write_origin(obj, I915_GEM_DOMAIN_GTT));
+				obj->base.write_domain = 0;
+				timeout++;
+			}
+			timeout++;
+		}
+
+		timeout = HZ * (ilog2(timeout) + 1) / 2;
+		schedule_delayed_work(&dev_priv->mm.gtt_wakeref.work,
+				      round_jiffies_up_relative(timeout));
+	} else {
+		intel_runtime_pm_put(dev_priv);
+		atomic_set(&dev_priv->mm.gtt_wakeref.count, -1);
+	}
+	mutex_unlock(&dev_priv->mm.gtt_wakeref.lock);
+}
+
 /**
  * Moves a single object to the GTT read, and possibly write domain.
  * @obj: object to act on
@@ -3513,6 +3564,7 @@ i915_gem_object_set_to_wc_domain(struct drm_i915_gem_object *obj, bool write)
 int
 i915_gem_object_set_to_gtt_domain(struct drm_i915_gem_object *obj, bool write)
 {
+	struct drm_i915_private *i915 = to_i915(obj->base.dev);
 	int ret;
 
 	lockdep_assert_held(&obj->base.dev->struct_mutex);
@@ -3525,6 +3577,17 @@ i915_gem_object_set_to_gtt_domain(struct drm_i915_gem_object *obj, bool write)
 				   NULL);
 	if (ret)
 		return ret;
+
+	mutex_lock(&i915->mm.gtt_wakeref.lock);
+	if (list_empty(&obj->mm.gtt_wakeref_link)) {
+		if (atomic_inc_and_test(&i915->mm.gtt_wakeref.count)) {
+			intel_runtime_pm_get(i915);
+			schedule_delayed_work(&i915->mm.gtt_wakeref.work,
+					      round_jiffies_up_relative(HZ));
+		}
+		list_add(&obj->mm.gtt_wakeref_link, &i915->mm.gtt_wakeref.list);
+	}
+	mutex_unlock(&i915->mm.gtt_wakeref.lock);
 
 	if (obj->base.write_domain == I915_GEM_DOMAIN_GTT)
 		return 0;
@@ -3541,7 +3604,7 @@ i915_gem_object_set_to_gtt_domain(struct drm_i915_gem_object *obj, bool write)
 	if (ret)
 		return ret;
 
-	flush_write_domain(obj, ~I915_GEM_DOMAIN_GTT);
+	i915_gem_object_flush_write_domain(obj, ~I915_GEM_DOMAIN_GTT);
 
 	/* Serialise direct access to this object with the barriers for
 	 * coherent writes from the GPU, by effectively invalidating the
@@ -3909,7 +3972,7 @@ i915_gem_object_set_to_cpu_domain(struct drm_i915_gem_object *obj, bool write)
 	if (ret)
 		return ret;
 
-	flush_write_domain(obj, ~I915_GEM_DOMAIN_CPU);
+	i915_gem_object_flush_write_domain(obj, ~I915_GEM_DOMAIN_CPU);
 
 	/* Flush the CPU cache if it's still invalid. */
 	if ((obj->base.read_domains & I915_GEM_DOMAIN_CPU) == 0) {
@@ -4258,6 +4321,7 @@ void i915_gem_object_init(struct drm_i915_gem_object *obj,
 
 	INIT_LIST_HEAD(&obj->global_link);
 	INIT_LIST_HEAD(&obj->userfault_link);
+	INIT_LIST_HEAD(&obj->mm.gtt_wakeref_link);
 	INIT_LIST_HEAD(&obj->vma_list);
 	INIT_LIST_HEAD(&obj->lut_list);
 	INIT_LIST_HEAD(&obj->batch_pool_link);
@@ -4418,6 +4482,8 @@ static void __i915_gem_free_objects(struct drm_i915_private *i915,
 
 		trace_i915_gem_object_destroy(obj);
 
+		i915_gem_object_flush_write_domain(obj, ~I915_GEM_DOMAIN_CPU);
+
 		GEM_BUG_ON(i915_gem_object_is_active(obj));
 		list_for_each_entry_safe(vma, vn,
 					 &obj->vma_list, obj_link) {
@@ -4439,6 +4505,12 @@ static void __i915_gem_free_objects(struct drm_i915_private *i915,
 		GEM_BUG_ON(obj->bind_count);
 		GEM_BUG_ON(atomic_read(&obj->frontbuffer_bits));
 		GEM_BUG_ON(!list_empty(&obj->lut_list));
+
+		if (!list_empty_careful(&obj->mm.gtt_wakeref_link)) {
+			mutex_lock(&i915->mm.gtt_wakeref.lock);
+			list_del(&obj->mm.gtt_wakeref_link);
+			mutex_unlock(&i915->mm.gtt_wakeref.lock);
+		}
 
 		if (obj->ops->release)
 			obj->ops->release(obj);
@@ -4572,6 +4644,8 @@ int i915_gem_suspend(struct drm_i915_private *dev_priv)
 	int ret;
 
 	intel_runtime_pm_get(dev_priv);
+	drain_delayed_work(&dev_priv->mm.gtt_wakeref.work);
+	WARN_ON(atomic_read(&dev_priv->mm.gtt_wakeref.count) != -1);
 	intel_suspend_gt_powersave(dev_priv);
 
 	mutex_lock(&dev->struct_mutex);
@@ -4924,6 +4998,15 @@ i915_gem_load_init_fences(struct drm_i915_private *dev_priv)
 	i915_gem_detect_bit_6_swizzle(dev_priv);
 }
 
+static void
+i915_gem_load_init__wakeref(struct drm_i915_private *i915)
+{
+	INIT_LIST_HEAD(&i915->mm.gtt_wakeref.list);
+	INIT_DELAYED_WORK(&i915->mm.gtt_wakeref.work, wakeref_timeout);
+	mutex_init(&i915->mm.gtt_wakeref.lock);
+	atomic_set(&i915->mm.gtt_wakeref.count, -1);
+}
+
 int
 i915_gem_load_init(struct drm_i915_private *dev_priv)
 {
@@ -4964,6 +5047,8 @@ i915_gem_load_init(struct drm_i915_private *dev_priv)
 	mutex_unlock(&dev_priv->drm.struct_mutex);
 	if (err)
 		goto err_priorities;
+
+	i915_gem_load_init__wakeref(dev_priv);
 
 	INIT_WORK(&dev_priv->mm.free_work, __i915_gem_free_work);
 	init_llist_head(&dev_priv->mm.free_list);
@@ -5013,6 +5098,9 @@ void i915_gem_load_cleanup(struct drm_i915_private *dev_priv)
 	i915_gem_timeline_fini(&dev_priv->gt.global_timeline);
 	WARN_ON(!list_empty(&dev_priv->gt.timelines));
 	mutex_unlock(&dev_priv->drm.struct_mutex);
+
+	drain_delayed_work(&dev_priv->mm.gtt_wakeref.work);
+	WARN_ON(atomic_read(&dev_priv->mm.gtt_wakeref.count) != -1);
 
 	kmem_cache_destroy(dev_priv->priorities);
 	kmem_cache_destroy(dev_priv->dependencies);

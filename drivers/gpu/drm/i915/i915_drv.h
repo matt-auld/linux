@@ -1499,6 +1499,18 @@ struct i915_gem_mm {
 	 */
 	struct list_head userfault_list;
 
+	/* List of all objects in gtt domain, holding a wakeref.
+	 * The list is reaped periodically, and protected by its own mutex.
+	 * Entries on this list do not carry a reference.
+	 */
+	struct {
+		struct mutex lock;
+		struct list_head list;
+		atomic_t count; /* -1 == no timeout scheduled */
+
+		struct delayed_work work;
+	} gtt_wakeref;
+
 	/**
 	 * List of objects which are pending destruction.
 	 */

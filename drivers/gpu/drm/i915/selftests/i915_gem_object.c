@@ -266,7 +266,7 @@ static int check_partial_mapping(struct drm_i915_gem_object *obj,
 		if (offset >= obj->base.size)
 			continue;
 
-		flush_write_domain(obj, ~I915_GEM_DOMAIN_CPU);
+		i915_gem_object_flush_write_domain(obj, ~I915_GEM_DOMAIN_CPU);
 
 		p = i915_gem_object_get_page(obj, offset >> PAGE_SHIFT);
 		cpu = kmap(p) + offset_in_page(offset);

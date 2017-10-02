@@ -206,6 +206,8 @@ struct drm_i915_gem_object {
 			struct mutex lock; /* protects this cache */
 		} get_page;
 
+		struct list_head gtt_wakeref_link;
+
 		/**
 		 * Advice: are the backing pages purgeable?
 		 */
@@ -449,6 +451,9 @@ i915_gem_object_last_write_engine(struct drm_i915_gem_object *obj)
 void i915_gem_object_set_cache_coherency(struct drm_i915_gem_object *obj,
 					 unsigned int cache_level);
 void i915_gem_object_flush_if_display(struct drm_i915_gem_object *obj);
+
+void i915_gem_object_flush_write_domain(struct drm_i915_gem_object *obj,
+					unsigned int flush_domains);
 
 #endif
 

@@ -127,8 +127,10 @@ static bool can_release_pages(struct drm_i915_gem_object *obj)
 
 static bool unsafe_drop_pages(struct drm_i915_gem_object *obj)
 {
-	if (i915_gem_object_unbind(obj) == 0)
+	if (i915_gem_object_unbind(obj) == 0) {
+		i915_gem_object_flush_write_domain(obj, ~I915_GEM_DOMAIN_CPU);
 		__i915_gem_object_put_pages(obj, I915_MM_SHRINKER);
+	}
 	return !READ_ONCE(obj->mm.pages);
 }
 
