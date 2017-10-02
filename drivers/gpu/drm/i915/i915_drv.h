@@ -3591,7 +3591,7 @@ enum i915_mm_subclass { /* lockdep subclass for obj->mm.lock */
 
 void __i915_gem_object_put_pages(struct drm_i915_gem_object *obj,
 				 enum i915_mm_subclass subclass);
-void __i915_gem_object_invalidate(struct drm_i915_gem_object *obj);
+void __i915_gem_object_truncate(struct drm_i915_gem_object *obj);
 
 enum i915_map_type {
 	I915_MAP_WB = 0,
@@ -3870,6 +3870,7 @@ unsigned long i915_gem_shrink(struct drm_i915_private *dev_priv,
 #define I915_SHRINK_BOUND 0x4
 #define I915_SHRINK_ACTIVE 0x8
 #define I915_SHRINK_VMAPS 0x10
+#define I915_SHRINK_WRITEBACK 0x20
 unsigned long i915_gem_shrink_all(struct drm_i915_private *dev_priv);
 void i915_gem_shrinker_init(struct drm_i915_private *dev_priv);
 void i915_gem_shrinker_cleanup(struct drm_i915_private *dev_priv);
