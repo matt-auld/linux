@@ -1237,6 +1237,8 @@ int intel_ring_pin(struct intel_ring *ring,
 	if (IS_ERR(addr))
 		goto err;
 
+	vma->obj->pin_global++;
+
 	ring->vaddr = addr;
 	return 0;
 
@@ -1268,6 +1270,7 @@ void intel_ring_unpin(struct intel_ring *ring)
 		i915_gem_object_unpin_map(ring->vma->obj);
 	ring->vaddr = NULL;
 
+	ring->vma->obj->pin_global--;
 	i915_vma_unpin(ring->vma);
 }
 
@@ -1432,6 +1435,7 @@ intel_ring_context_pin(struct intel_engine_cs *engine,
 			goto err;
 
 		ce->state->obj->mm.dirty = true;
+		ce->state->obj->pin_global++;
 	}
 
 	/* The kernel context is only used as a placeholder for flushing the
@@ -1466,8 +1470,10 @@ static void intel_ring_context_unpin(struct intel_engine_cs *engine,
 	if (--ce->pin_count)
 		return;
 
-	if (ce->state)
+	if (ce->state) {
+		ce->state->obj->pin_global--;
 		i915_vma_unpin(ce->state);
+	}
 
 	i915_gem_context_put(ctx);
 }
