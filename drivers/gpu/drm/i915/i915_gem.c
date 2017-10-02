@@ -1552,9 +1552,12 @@ static void i915_gem_object_bump_inactive_ggtt(struct drm_i915_gem_object *obj)
 		list_move_tail(&vma->vm_link, &vma->vm->inactive_list);
 	}
 
+	GEM_BUG_ON(!i915_gem_object_has_pinned_pages(obj));
 	i915 = to_i915(obj->base.dev);
+	spin_lock(&i915->mm.obj_lock);
 	list = obj->bind_count ? &i915->mm.bound_list : &i915->mm.unbound_list;
-	list_move_tail(&obj->global_link, list);
+	list_move_tail(&obj->mm.link, list);
+	spin_unlock(&i915->mm.obj_lock);
 }
 
 /**
@@ -2255,6 +2258,7 @@ static void __i915_gem_object_reset_page_iter(struct drm_i915_gem_object *obj)
 void __i915_gem_object_put_pages(struct drm_i915_gem_object *obj,
 				 enum i915_mm_subclass subclass)
 {
+	struct drm_i915_private *i915 = to_i915(obj->base.dev);
 	struct sg_table *pages;
 
 	if (i915_gem_object_has_pinned_pages(obj))
@@ -2274,6 +2278,10 @@ void __i915_gem_object_put_pages(struct drm_i915_gem_object *obj,
 	 * lists early. */
 	pages = fetch_and_zero(&obj->mm.pages);
 	GEM_BUG_ON(!pages);
+
+	spin_lock(&i915->mm.obj_lock);
+	list_del(&obj->mm.link);
+	spin_unlock(&i915->mm.obj_lock);
 
 	if (obj->mm.mapping) {
 		void *ptr;
@@ -2509,7 +2517,7 @@ void __i915_gem_object_set_pages(struct drm_i915_gem_object *obj,
 	obj->mm.pages = pages;
 
 	if (i915_gem_object_is_tiled(obj) &&
-	    to_i915(obj->base.dev)->quirks & QUIRK_PIN_SWIZZLED_PAGES) {
+	    i915->quirks & QUIRK_PIN_SWIZZLED_PAGES) {
 		GEM_BUG_ON(obj->mm.quirked);
 		__i915_gem_object_pin_pages(obj);
 		obj->mm.quirked = true;
@@ -2531,8 +2539,11 @@ void __i915_gem_object_set_pages(struct drm_i915_gem_object *obj,
 		if (obj->mm.page_sizes.phys & ~0u << i)
 			obj->mm.page_sizes.sg |= BIT(i);
 	}
-
 	GEM_BUG_ON(!HAS_PAGE_SIZES(i915, obj->mm.page_sizes.sg));
+
+	spin_lock(&i915->mm.obj_lock);
+	list_add(&obj->mm.link, &i915->mm.unbound_list);
+	spin_unlock(&i915->mm.obj_lock);
 }
 
 static int ____i915_gem_object_get_pages(struct drm_i915_gem_object *obj)
@@ -4339,8 +4350,8 @@ void i915_gem_object_init(struct drm_i915_gem_object *obj,
 {
 	mutex_init(&obj->mm.lock);
 
-	INIT_LIST_HEAD(&obj->global_link);
 	INIT_LIST_HEAD(&obj->mm.gtt_wakeref_link);
+	INIT_LIST_HEAD(&obj->userfault_link);
 	INIT_LIST_HEAD(&obj->vma_list);
 	INIT_LIST_HEAD(&obj->lut_list);
 	INIT_LIST_HEAD(&obj->batch_pool_link);
@@ -4513,7 +4524,18 @@ static void __i915_gem_free_objects(struct drm_i915_private *i915,
 		GEM_BUG_ON(!list_empty(&obj->vma_list));
 		GEM_BUG_ON(!RB_EMPTY_ROOT(&obj->vma_tree));
 
-		list_del(&obj->global_link);
+		/* This serializes freeing with the shrinker. Since the free
+		 * is delayed, first by RCU then by the workqueue, we want the
+		 * shrinker to be able to free pages of unreferenced objects,
+		 * or else we may oom whilst there are plenty of deferred
+		 * freed objects.
+		 */
+		if (i915_gem_object_has_pages(obj)) {
+			spin_lock(&i915->mm.obj_lock);
+			list_del_init(&obj->mm.link);
+			spin_unlock(&i915->mm.obj_lock);
+		}
+
 	}
 	intel_runtime_pm_put(i915);
 	mutex_unlock(&i915->drm.struct_mutex);
@@ -5072,11 +5094,14 @@ i915_gem_load_init(struct drm_i915_private *dev_priv)
 	i915_gem_load_init__wakeref(dev_priv);
 
 	INIT_WORK(&dev_priv->mm.free_work, __i915_gem_free_work);
+
+	spin_lock_init(&dev_priv->mm.obj_lock);
 	init_llist_head(&dev_priv->mm.free_list);
 	INIT_LIST_HEAD(&dev_priv->mm.unbound_list);
 	INIT_LIST_HEAD(&dev_priv->mm.bound_list);
 	INIT_LIST_HEAD(&dev_priv->mm.fence_list);
 	INIT_LIST_HEAD(&dev_priv->mm.userfault_list);
+
 	INIT_DELAYED_WORK(&dev_priv->gt.retire_work,
 			  i915_gem_retire_work_handler);
 	INIT_DELAYED_WORK(&dev_priv->gt.idle_work,
@@ -5172,12 +5197,12 @@ int i915_gem_freeze_late(struct drm_i915_private *dev_priv)
 	i915_gem_shrink(dev_priv, -1UL, NULL, I915_SHRINK_UNBOUND);
 	i915_gem_drain_freed_objects(dev_priv);
 
-	mutex_lock(&dev_priv->drm.struct_mutex);
+	spin_lock(&dev_priv->mm.obj_lock);
 	for (p = phases; *p; p++) {
-		list_for_each_entry(obj, *p, global_link)
+		list_for_each_entry(obj, *p, mm.link)
 			__start_cpu_write(obj);
 	}
-	mutex_unlock(&dev_priv->drm.struct_mutex);
+	spin_unlock(&dev_priv->mm.obj_lock);
 
 	return 0;
 }

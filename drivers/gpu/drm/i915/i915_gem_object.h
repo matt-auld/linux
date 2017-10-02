@@ -114,7 +114,6 @@ struct drm_i915_gem_object {
 
 	/** Stolen memory for this object, instead of being backed by shmem. */
 	struct drm_mm_node *stolen;
-	struct list_head global_link;
 	union {
 		struct rcu_head rcu;
 		struct llist_node freed;
@@ -209,6 +208,12 @@ struct drm_i915_gem_object {
 		} get_page;
 
 		struct list_head gtt_wakeref_link;
+
+		/**
+		 * Element within i915->mm.unbound_list or i915->mm.bound_list,
+		 * locked by i915->mm.obj_lock.
+		 */
+		struct list_head link;
 
 		/**
 		 * Advice: are the backing pages purgeable?
