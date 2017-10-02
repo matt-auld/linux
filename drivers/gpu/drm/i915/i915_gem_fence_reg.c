@@ -55,10 +55,9 @@
  * CPU ptes into GTT mmaps (not the GTT ptes themselves) as needed.
  */
 
-#define pipelined 0
-
-static void i965_write_fence_reg(struct drm_i915_fence_reg *fence,
-				 struct i915_vma *vma)
+static int i965_write_fence_reg(struct drm_i915_fence_reg *fence,
+				struct i915_vma *vma,
+				struct drm_i915_gem_request *pipelined)
 {
 	i915_reg_t fence_reg_lo, fence_reg_hi;
 	int fence_pitch_shift;
@@ -110,11 +109,30 @@ static void i965_write_fence_reg(struct drm_i915_fence_reg *fence,
 		I915_WRITE(fence_reg_hi, upper_32_bits(val));
 		I915_WRITE(fence_reg_lo, lower_32_bits(val));
 		POSTING_READ(fence_reg_lo);
+	} else {
+		u32 *cs;
+
+		cs = intel_ring_begin(pipelined, 8);
+		if (IS_ERR(cs))
+			return PTR_ERR(cs);
+
+		*cs++ = MI_LOAD_REGISTER_IMM(3);
+		*cs++ = i915_mmio_reg_offset(fence_reg_lo);
+		*cs++ = 0;
+		*cs++ = i915_mmio_reg_offset(fence_reg_hi);
+		*cs++ = upper_32_bits(val);
+		*cs++ = i915_mmio_reg_offset(fence_reg_lo);
+		*cs++ = lower_32_bits(val);
+		*cs++ = MI_NOOP;
+		intel_ring_advance(pipelined, cs);
 	}
+
+	return 0;
 }
 
-static void i915_write_fence_reg(struct drm_i915_fence_reg *fence,
-				 struct i915_vma *vma)
+static int i915_write_fence_reg(struct drm_i915_fence_reg *fence,
+				struct i915_vma *vma,
+				struct drm_i915_gem_request *pipelined)
 {
 	u32 val;
 
@@ -150,11 +168,26 @@ static void i915_write_fence_reg(struct drm_i915_fence_reg *fence,
 
 		I915_WRITE(reg, val);
 		POSTING_READ(reg);
+	} else {
+		u32 *cs;
+
+		cs = intel_ring_begin(pipelined, 4);
+		if (IS_ERR(cs))
+			return PTR_ERR(cs);
+
+		*cs++ = MI_LOAD_REGISTER_IMM(1);
+		*cs++ = i915_mmio_reg_offset(FENCE_REG(fence->id));
+		*cs++ = val;
+		*cs++ = MI_NOOP;
+		intel_ring_advance(pipelined, cs);
 	}
+
+	return 0;
 }
 
-static void i830_write_fence_reg(struct drm_i915_fence_reg *fence,
-				 struct i915_vma *vma)
+static int i830_write_fence_reg(struct drm_i915_fence_reg *fence,
+				struct i915_vma *vma,
+				struct drm_i915_gem_request *pipelined)
 {
 	u32 val;
 
@@ -182,29 +215,49 @@ static void i830_write_fence_reg(struct drm_i915_fence_reg *fence,
 
 		I915_WRITE(reg, val);
 		POSTING_READ(reg);
+	} else {
+		u32 *cs;
+
+		cs = intel_ring_begin(pipelined, 4);
+		if (IS_ERR(cs))
+			return PTR_ERR(cs);
+
+		*cs++ = MI_LOAD_REGISTER_IMM(1);
+		*cs++ = i915_mmio_reg_offset(FENCE_REG(fence->id));
+		*cs++ = val;
+		*cs++ = MI_NOOP;
+		intel_ring_advance(pipelined, cs);
 	}
+
+	return 0;
 }
 
-static void fence_write(struct drm_i915_fence_reg *fence,
-			struct i915_vma *vma)
+static int fence_write(struct drm_i915_fence_reg *fence,
+		       struct i915_vma *vma,
+		       struct drm_i915_gem_request *rq)
 {
+	int err;
+
 	/* Previous access through the fence register is marshalled by
 	 * the mb() inside the fault handlers (i915_gem_release_mmaps)
 	 * and explicitly managed for internal users.
 	 */
 
 	if (IS_GEN2(fence->i915))
-		i830_write_fence_reg(fence, vma);
+		err = i830_write_fence_reg(fence, vma, rq);
 	else if (IS_GEN3(fence->i915))
-		i915_write_fence_reg(fence, vma);
+		err = i915_write_fence_reg(fence, vma, rq);
 	else
-		i965_write_fence_reg(fence, vma);
+		err = i965_write_fence_reg(fence, vma, rq);
+	if (err)
+		return err;
 
 	/* Access through the fenced region afterwards is
 	 * ordered by the posting reads whilst writing the registers.
 	 */
 
 	fence->dirty = false;
+	return 0;
 }
 
 static int fence_update(struct drm_i915_fence_reg *fence,
@@ -212,15 +265,13 @@ static int fence_update(struct drm_i915_fence_reg *fence,
 {
 	int ret;
 
+	ret = i915_gem_active_retire(&fence->pipelined,
+				     &fence->i915->drm.struct_mutex);
+	if (ret)
+		return ret;
+
 	if (vma) {
 		if (!i915_vma_is_map_and_fenceable(vma))
-			return -EINVAL;
-
-		if (WARN(!i915_gem_object_get_stride(vma->obj) ||
-			 !i915_gem_object_get_tiling(vma->obj),
-			 "bogus fence setup with stride: 0x%x, tiling mode: %i\n",
-			 i915_gem_object_get_stride(vma->obj),
-			 i915_gem_object_get_tiling(vma->obj)))
 			return -EINVAL;
 
 		ret = i915_gem_active_retire(&vma->last_fence,
@@ -253,7 +304,7 @@ static int fence_update(struct drm_i915_fence_reg *fence,
 	 * to the runtime resume, see i915_gem_restore_fences().
 	 */
 	if (intel_runtime_pm_get_if_in_use(fence->i915)) {
-		fence_write(fence, vma);
+		fence_write(fence, vma, NULL);
 		intel_runtime_pm_put(fence->i915);
 	}
 
@@ -287,7 +338,9 @@ int i915_vma_put_fence(struct i915_vma *vma)
 	if (!fence)
 		return 0;
 
-	if (fence->pin_count)
+	GEM_BUG_ON(fence->vma != vma);
+
+	if (atomic_read(&fence->pin_count))
 		return -EBUSY;
 
 	return fence_update(fence, NULL);
@@ -300,7 +353,7 @@ static struct drm_i915_fence_reg *fence_find(struct drm_i915_private *dev_priv)
 	list_for_each_entry(fence, &dev_priv->mm.fence_list, link) {
 		GEM_BUG_ON(fence->vma && fence->vma->fence != fence);
 
-		if (fence->pin_count)
+		if (atomic_read(&fence->pin_count))
 			continue;
 
 		return fence;
@@ -344,11 +397,16 @@ i915_vma_pin_fence(struct i915_vma *vma)
 	assert_rpm_wakelock_held(vma->vm->i915);
 
 	/* Just update our place in the LRU if our fence is getting reused. */
-	if (vma->fence) {
-		fence = vma->fence;
+	fence = vma->fence;
+	if (fence) {
 		GEM_BUG_ON(fence->vma != vma);
-		fence->pin_count++;
+		atomic_inc(&fence->pin_count);
 		if (!fence->dirty) {
+			err = i915_gem_active_retire(&fence->pipelined,
+						     &fence->i915->drm.struct_mutex);
+			if (err)
+				goto out_unpin;
+
 			list_move_tail(&fence->link,
 				       &fence->i915->mm.fence_list);
 			return 0;
@@ -358,8 +416,8 @@ i915_vma_pin_fence(struct i915_vma *vma)
 		if (IS_ERR(fence))
 			return PTR_ERR(fence);
 
-		GEM_BUG_ON(fence->pin_count);
-		fence->pin_count++;
+		GEM_BUG_ON(atomic_read(&fence->pin_count));
+		atomic_inc(&fence->pin_count);
 	} else
 		return 0;
 
@@ -374,8 +432,95 @@ i915_vma_pin_fence(struct i915_vma *vma)
 		return 0;
 
 out_unpin:
-	fence->pin_count--;
+	atomic_dec(&fence->pin_count);
 	return err;
+}
+
+int i915_vma_reserve_fence(struct i915_vma *vma)
+{
+	struct drm_i915_fence_reg *fence;
+
+	lockdep_assert_held(&vma->vm->i915->drm.struct_mutex);
+	GEM_BUG_ON(!drm_mm_node_allocated(&vma->node));
+	GEM_BUG_ON(!i915_vma_is_pinned(vma));
+
+	fence = vma->fence;
+	if (!fence) {
+		if (!i915_gem_object_is_tiled(vma->obj))
+			return 0;
+
+		if (!i915_vma_is_map_and_fenceable(vma))
+			return -EINVAL;
+
+		fence = fence_find(vma->vm->i915);
+		if (IS_ERR(fence))
+			return PTR_ERR(fence);
+
+		vma->fence = fence;
+
+		if (fence->vma) {
+			i915_gem_release_mmap(fence->vma->obj);
+			fence->vma->fence = NULL;
+		}
+		fence->vma = vma;
+		fence->dirty = true;
+	}
+	atomic_inc(&fence->pin_count);
+	list_move_tail(&fence->link, &fence->i915->mm.fence_list);
+
+	GEM_BUG_ON(!i915_gem_object_is_tiled(vma->obj));
+	GEM_BUG_ON(!i915_vma_is_map_and_fenceable(vma));
+	GEM_BUG_ON(vma->node.size != vma->fence_size);
+	GEM_BUG_ON(!IS_ALIGNED(vma->node.start, vma->fence_alignment));
+
+	return 0;
+}
+
+int i915_vma_emit_pipelined_fence(struct i915_vma *vma,
+				  struct drm_i915_gem_request *rq)
+{
+	struct drm_i915_fence_reg *fence = vma->fence;
+	struct drm_i915_gem_request *prev;
+	int err;
+
+	lockdep_assert_held(&vma->vm->i915->drm.struct_mutex);
+	GEM_BUG_ON(fence && !atomic_read(&fence->pin_count));
+
+	if (!fence)
+		goto out;
+
+	prev = i915_gem_active_raw(&fence->pipelined,
+				   &fence->i915->drm.struct_mutex);
+	if (prev) {
+		err = i915_gem_request_await_dma_fence(rq, &prev->fence);
+		if (err)
+			return err;
+	}
+
+	if (!fence->dirty)
+		goto out;
+
+	GEM_BUG_ON(!i915_vma_is_map_and_fenceable(vma));
+
+	if (fence->vma) {
+		prev = i915_gem_active_raw(&fence->vma->last_fence,
+					   &fence->i915->drm.struct_mutex);
+		if (prev) {
+			err = i915_gem_request_await_dma_fence(rq,
+							       &prev->fence);
+			if (err)
+				return err;
+		}
+	}
+
+	err = fence_write(fence, vma, rq);
+	if (err)
+		return err;
+
+	i915_gem_active_set(&fence->pipelined, rq);
+out:
+	i915_gem_active_set(&vma->last_fence, rq);
+	return 0;
 }
 
 /**
@@ -397,7 +542,7 @@ i915_reserve_fence(struct drm_i915_private *dev_priv)
 	/* Keep at least one fence available for the display engine. */
 	count = 0;
 	list_for_each_entry(fence, &dev_priv->mm.fence_list, link)
-		count += !fence->pin_count;
+		count += !atomic_read(&fence->pin_count);
 	if (count <= 1)
 		return ERR_PTR(-ENOSPC);
 
@@ -479,6 +624,7 @@ void i915_gem_restore_fences(struct drm_i915_private *dev_priv)
 		 */
 		if (vma && !i915_gem_object_is_tiled(vma->obj)) {
 			GEM_BUG_ON(!reg->dirty);
+			GEM_BUG_ON(atomic_read(&reg->pin_count));
 			GEM_BUG_ON(!list_empty(&vma->obj->userfault_link));
 
 			list_move(&reg->link, &dev_priv->mm.fence_list);
@@ -486,7 +632,7 @@ void i915_gem_restore_fences(struct drm_i915_private *dev_priv)
 			vma = NULL;
 		}
 
-		fence_write(reg, vma);
+		fence_write(reg, vma, NULL);
 		reg->vma = vma;
 	}
 }

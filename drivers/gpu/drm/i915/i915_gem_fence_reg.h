@@ -36,7 +36,7 @@ struct drm_i915_fence_reg {
 	struct list_head link;
 	struct drm_i915_private *i915;
 	struct i915_vma *vma;
-	int pin_count;
+	atomic_t pin_count;
 	int id;
 	/**
 	 * Whether the tiling parameters for the currently
@@ -47,6 +47,7 @@ struct drm_i915_fence_reg {
 	 * command (such as BLT on gen2/3), as a "fence".
 	 */
 	bool dirty;
+	struct i915_gem_active pipelined;
 };
 
 #endif

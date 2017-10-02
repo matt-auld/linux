@@ -740,6 +740,7 @@ int i915_vma_unbind(struct i915_vma *vma)
 		__i915_vma_iounmap(vma);
 		vma->flags &= ~I915_VMA_CAN_FENCE;
 	}
+	GEM_BUG_ON(vma->fence);
 
 	if (likely(!vma->vm->closed)) {
 		trace_i915_vma_unbind(vma);

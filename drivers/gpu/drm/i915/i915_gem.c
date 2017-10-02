@@ -4993,6 +4993,7 @@ i915_gem_load_init_fences(struct drm_i915_private *dev_priv)
 		fence->i915 = dev_priv;
 		fence->id = i;
 		list_add_tail(&fence->link, &dev_priv->mm.fence_list);
+		init_request_active(&fence->pipelined, NULL);
 	}
 	i915_gem_restore_fences(dev_priv);
 

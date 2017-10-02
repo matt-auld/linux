@@ -950,7 +950,7 @@ static int i915_gem_fence_regs_info(struct seq_file *m, void *data)
 		struct i915_vma *vma = dev_priv->fence_regs[i].vma;
 
 		seq_printf(m, "Fence %d, pin count = %d, object = ",
-			   i, dev_priv->fence_regs[i].pin_count);
+			   i, atomic_read(&dev_priv->fence_regs[i].pin_count));
 		if (!vma)
 			seq_puts(m, "unused");
 		else
