@@ -24,12 +24,12 @@ enum {
 	DEBUG_FENCE_NOTIFY,
 };
 
-#ifdef CONFIG_DRM_I915_SW_FENCE_DEBUG_OBJECTS
-
 static void *i915_sw_fence_debug_hint(void *addr)
 {
 	return (void *)(((struct i915_sw_fence *)addr)->flags & I915_SW_FENCE_MASK);
 }
+
+#ifdef CONFIG_DRM_I915_SW_FENCE_DEBUG_OBJECTS
 
 static struct debug_obj_descr i915_sw_fence_debug_descr = {
 	.name = "i915_sw_fence",
@@ -369,10 +369,11 @@ static void timer_i915_sw_fence_wake(unsigned long data)
 	if (!fence)
 		return;
 
-	pr_warn("asynchronous wait on fence %s:%s:%x timed out\n",
+	pr_warn("Asynchronous wait on fence %s:%s:%x timed out for hint:%pF\n",
 		cb->dma->ops->get_driver_name(cb->dma),
 		cb->dma->ops->get_timeline_name(cb->dma),
-		cb->dma->seqno);
+		cb->dma->seqno,
+		i915_sw_fence_debug_hint(fence));
 
 	i915_sw_fence_complete(fence);
 }
