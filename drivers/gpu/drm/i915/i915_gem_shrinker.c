@@ -118,6 +118,27 @@ static bool unsafe_drop_pages(struct drm_i915_gem_object *obj)
 	return !i915_gem_object_has_pages(obj);
 }
 
+static void close_object(struct drm_i915_gem_object *obj)
+{
+	struct drm_i915_private *i915 = to_i915(obj->base.dev);
+	struct i915_lut_handle *lut, *ln;
+
+	list_for_each_entry_safe(lut, ln, &obj->lut_list, obj_link) {
+		struct i915_vma *vma;
+
+		vma = radix_tree_delete(&lut->ctx->handles_vma, lut->handle);
+		GEM_BUG_ON(!vma->open_count);
+		if (!--vma->open_count && !i915_vma_is_ggtt(vma))
+			i915_vma_close(vma);
+
+		list_del(&lut->ctx_link);
+
+		kmem_cache_free(i915->luts, lut);
+		i915_gem_object_put(obj);
+	}
+	INIT_LIST_HEAD(&obj->lut_list);
+}
+
 static void __start_writeback(struct drm_i915_gem_object *obj,
 			      unsigned int flags)
 {
@@ -138,6 +159,7 @@ static void __start_writeback(struct drm_i915_gem_object *obj,
 	case I915_MADV_DONTNEED:
 		__i915_gem_object_truncate(obj);
 	case __I915_MADV_PURGED:
+		close_object(obj);
 		return;
 	}
 
