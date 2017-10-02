@@ -1174,8 +1174,20 @@ restart:
 	GEM_BUG_ON(!intel_wait_has_seqno(&wait));
 	GEM_BUG_ON(!i915_sw_fence_signaled(&req->submit));
 
-	/* Optimistic short spin before touching IRQs */
-	if (__i915_spin_request(req, wait.seqno, state, 5))
+	/* Optimistic spin before touching IRQs.
+	 *
+	 * We use a rather large value here to offset the penalty of switching
+	 * away from the active task. Frequently, the client will wait upon
+	 * an old swapbuffer to throttle itself to remain within a frame of
+	 * the gpu. If the client is running in lockstep with the gpu, then
+	 * it should not be waiting long at all, and a sleep now will incur
+	 * extra scheduler latency in producing the next frame. So we sleep
+	 * for longer to try and keep the client running.
+	 *
+	 * We need ~5us to enable the irq, ~20us to hide a context switch,
+	 * we use 250us to keep the cache hot.
+	 */
+	if (__i915_spin_request(req, wait.seqno, state, 250))
 		goto complete;
 
 	set_current_state(state);
@@ -1231,8 +1243,13 @@ wakeup:
 		    __i915_wait_request_check_and_reset(req))
 			continue;
 
-		/* Only spin if we know the GPU is processing this request */
-		if (__i915_spin_request(req, wait.seqno, state, 2))
+		/*
+		 * A quick spin now we are on the CPU to offset the cost of
+		 * context switching away (and so spin for roughly the same as
+		 * the scheduler latency). We only spin if we know the GPU is
+		 * processing this request, and so likely to finish shortly.
+		 */
+		if (__i915_spin_request(req, wait.seqno, state, 20))
 			break;
 
 		if (!intel_wait_check_request(&wait, req)) {
