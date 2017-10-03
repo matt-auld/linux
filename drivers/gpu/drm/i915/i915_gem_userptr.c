@@ -438,7 +438,7 @@ alloc_table:
 	}
 
 	sg_mask = 0;
-	for_each_sg(st->sgl, sg, num_pages, n)
+	for_each_sg(st->sgl, sg, st->nents, n)
 		sg_mask |= sg->length;
 
 	__i915_gem_object_set_pages(obj, st, sg_mask);
