@@ -2287,6 +2287,8 @@ struct drm_i915_private {
 	struct drm_dma_handle *status_page_dmah;
 	struct resource mch_res;
 
+	struct ctl_table_header *sysctl_header;
+
 	/* protects the irq masks */
 	spinlock_t irq_lock;
 
@@ -2565,7 +2567,6 @@ struct drm_i915_private {
 		bool initialized;
 
 		struct kobject *metrics_kobj;
-		struct ctl_table_header *sysctl_header;
 
 		/*
 		 * Lock associated with adding/modifying/removing OA configs

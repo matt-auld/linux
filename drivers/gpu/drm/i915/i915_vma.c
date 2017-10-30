@@ -528,8 +528,8 @@ i915_vma_insert(struct i915_vma *vma, u64 size, u64 alignment, u64 flags)
 		 * Note that we assume that GGTT are limited to 4GiB for the
 		 * forseeable future. See also i915_ggtt_offset().
 		 */
-		if (upper_32_bits(end - 1) &&
-		    vma->page_sizes.sg > I915_GTT_PAGE_SIZE) {
+		if (i915_vm_is_48bit(vma->vm) &&
+		    vma->page_sizes.phys >= I915_GTT_PAGE_SIZE_2M) {
 			/*
 			 * We can't mix 64K and 4K PTEs in the same page-table
 			 * (2M block), and so to avoid the ugliness and

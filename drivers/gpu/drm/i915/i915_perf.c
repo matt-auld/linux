@@ -267,8 +267,6 @@
 #define POLL_PERIOD (NSEC_PER_SEC / POLL_FREQUENCY)
 
 /* for sysctl proc_dointvec_minmax of dev.i915.perf_stream_paranoid */
-static int zero;
-static int one = 1;
 static u32 i915_perf_stream_paranoid = true;
 
 /* The maximum exponent the hardware accepts is 63 (essentially it selects one
@@ -3339,47 +3337,6 @@ lock_err:
 	return ret;
 }
 
-static struct ctl_table oa_table[] = {
-	{
-	 .procname = "perf_stream_paranoid",
-	 .data = &i915_perf_stream_paranoid,
-	 .maxlen = sizeof(i915_perf_stream_paranoid),
-	 .mode = 0644,
-	 .proc_handler = proc_dointvec_minmax,
-	 .extra1 = &zero,
-	 .extra2 = &one,
-	 },
-	{
-	 .procname = "oa_max_sample_rate",
-	 .data = &i915_oa_max_sample_rate,
-	 .maxlen = sizeof(i915_oa_max_sample_rate),
-	 .mode = 0644,
-	 .proc_handler = proc_dointvec_minmax,
-	 .extra1 = &zero,
-	 .extra2 = &oa_sample_rate_hard_limit,
-	 },
-	{}
-};
-
-static struct ctl_table i915_root[] = {
-	{
-	 .procname = "i915",
-	 .maxlen = 0,
-	 .mode = 0555,
-	 .child = oa_table,
-	 },
-	{}
-};
-
-static struct ctl_table dev_root[] = {
-	{
-	 .procname = "dev",
-	 .maxlen = 0,
-	 .mode = 0555,
-	 .child = i915_root,
-	 },
-	{}
-};
 
 /**
  * i915_perf_init - initialize i915-perf state on module load
@@ -3484,7 +3441,6 @@ void i915_perf_init(struct drm_i915_private *dev_priv)
 
 		oa_sample_rate_hard_limit =
 			dev_priv->perf.oa.timestamp_frequency / 2;
-		dev_priv->perf.sysctl_header = register_sysctl_table(dev_root);
 
 		mutex_init(&dev_priv->perf.metrics_lock);
 		idr_init(&dev_priv->perf.metrics_idr);
@@ -3514,8 +3470,6 @@ void i915_perf_fini(struct drm_i915_private *dev_priv)
 
 	idr_for_each(&dev_priv->perf.metrics_idr, destroy_config, dev_priv);
 	idr_destroy(&dev_priv->perf.metrics_idr);
-
-	unregister_sysctl_table(dev_priv->perf.sysctl_header);
 
 	memset(&dev_priv->perf.oa.ops, 0, sizeof(dev_priv->perf.oa.ops));
 
