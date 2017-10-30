@@ -105,6 +105,10 @@
  *
  */
 
+static int ppgtt_shuffle_size;
+static int ppgtt_shuffle_size_max = SZ_512K;
+static int zero;
+
 static int
 i915_get_ggtt_vma_pages(struct i915_vma *vma);
 
@@ -980,6 +984,8 @@ static __always_inline struct gen8_insert_pte gen8_insert_pte(u64 start)
 	};
 }
 
+#include "selftests/i915_random.h"
+
 static __always_inline bool
 gen8_ppgtt_insert_pte_entries(struct i915_hw_ppgtt *ppgtt,
 			      struct i915_page_directory_pointer *pdp,
@@ -987,18 +993,55 @@ gen8_ppgtt_insert_pte_entries(struct i915_hw_ppgtt *ppgtt,
 			      struct gen8_insert_pte *idx,
 			      enum i915_cache_level cache_level)
 {
+	I915_RND_STATE(seed_prng);
+	int shuffle_size = ppgtt_shuffle_size;
 	struct i915_page_directory *pd;
 	const gen8_pte_t pte_encode = gen8_pte_encode(0, cache_level);
 	gen8_pte_t *vaddr;
 	bool ret;
 
+	if (shuffle_size)
+		pr_err("SHUFFLE-SIZE: %d", shuffle_size);
+
 	GEM_BUG_ON(idx->pdpe >= i915_pdpes_per_pdp(&ppgtt->base));
 	pd = pdp->page_directory[idx->pdpe];
 	vaddr = kmap_atomic_px(pd->page_table[idx->pde]);
 	do {
-		vaddr[idx->pte] = pte_encode | iter->dma;
+		/* lord have mercy */
+		if (IS_ALIGNED(iter->dma, SZ_2M) &&
+		    !idx->pte && iter->sg->length >= SZ_2M &&
+		    shuffle_size) {
+			I915_RND_SUBSTATE(prng, seed_prng);
+			static gen8_pte_t tmp[128];
+			int n_ptes = shuffle_size/ SZ_4K;
+			const int n = SZ_2M / shuffle_size;
+			int i;
+			int *order;
 
-		iter->dma += PAGE_SIZE;
+			GEM_BUG_ON(!is_power_of_2(shuffle_size));
+			GEM_BUG_ON(shuffle_size > SZ_512K);
+			GEM_BUG_ON(shuffle_size < SZ_4K);
+
+			do {
+				vaddr[idx->pte++] = pte_encode | iter->dma;
+				iter->dma += PAGE_SIZE;
+			} while (idx->pte < GEN8_PTES);
+
+			order = i915_random_order(n, &prng);
+
+			/* 64K page order shuffle */
+			for (i = 0; i < n; i++) {
+				memcpy(tmp, &vaddr[i * n_ptes], n_ptes * sizeof(gen8_pte_t));
+				memcpy(&vaddr[i * n_ptes], &vaddr[order[i] * n_ptes], n_ptes * sizeof(gen8_pte_t));
+				memcpy(&vaddr[order[i] * n_ptes], tmp, n_ptes * sizeof(gen8_pte_t));
+			}
+
+			kfree(order);
+		} else  {
+			vaddr[idx->pte++] = pte_encode | iter->dma;
+			iter->dma += PAGE_SIZE;
+		}
+
 		if (iter->dma >= iter->max) {
 			iter->sg = __sg_next(iter->sg);
 			if (!iter->sg) {
@@ -1010,7 +1053,7 @@ gen8_ppgtt_insert_pte_entries(struct i915_hw_ppgtt *ppgtt,
 			iter->max = iter->dma + iter->sg->length;
 		}
 
-		if (++idx->pte == GEN8_PTES) {
+		if (idx->pte == GEN8_PTES) {
 			idx->pte = 0;
 
 			if (++idx->pde == I915_PDES) {
@@ -1166,6 +1209,7 @@ static void gen8_ppgtt_insert_4lvl(struct i915_address_space *vm,
 	struct i915_page_directory_pointer **pdps = ppgtt->pml4.pdps;
 
 	if (vma->page_sizes.sg > I915_GTT_PAGE_SIZE) {
+		GEM_BUG_ON(1);
 		gen8_ppgtt_insert_huge_entries(vma, pdps, &iter, cache_level);
 	} else {
 		struct gen8_insert_pte idx = gen8_insert_pte(vma->node.start);
@@ -2885,6 +2929,8 @@ void i915_ggtt_cleanup_hw(struct drm_i915_private *dev_priv)
 
 	arch_phys_wc_del(ggtt->mtrr);
 	io_mapping_fini(&ggtt->mappable);
+
+	unregister_sysctl_table(dev_priv->sysctl_header);
 }
 
 static unsigned int gen6_get_total_gtt_size(u16 snb_gmch_ctl)
@@ -3512,6 +3558,39 @@ int i915_ggtt_probe_hw(struct drm_i915_private *dev_priv)
 	return 0;
 }
 
+static struct ctl_table ppgtt_table[] = {
+	{
+	 .procname = "ppgtt_shuffle_size",
+	 .data = &ppgtt_shuffle_size,
+	 .maxlen = sizeof(ppgtt_shuffle_size),
+	 .mode = 0644,
+	 .proc_handler = proc_dointvec_minmax,
+	 .extra1 = &zero,
+	 .extra2 = &ppgtt_shuffle_size_max,
+	 },
+	{}
+};
+
+static struct ctl_table i915_root[] = {
+	{
+	 .procname = "i915",
+	 .maxlen = 0,
+	 .mode = 0555,
+	 .child = ppgtt_table,
+	 },
+	{}
+};
+
+static struct ctl_table dev_root[] = {
+	{
+	 .procname = "dev",
+	 .maxlen = 0,
+	 .mode = 0555,
+	 .child = i915_root,
+	 },
+	{}
+};
+
 /**
  * i915_ggtt_init_hw - Initialize GGTT hardware
  * @dev_priv: i915 device
@@ -3550,6 +3629,11 @@ int i915_ggtt_init_hw(struct drm_i915_private *dev_priv)
 	ret = i915_gem_init_stolen(dev_priv);
 	if (ret)
 		goto out_gtt_cleanup;
+
+	dev_priv->sysctl_header = register_sysctl_table(dev_root);
+
+	while (!i915_selftest.random_seed)
+		i915_selftest.random_seed = get_random_int();
 
 	return 0;
 
