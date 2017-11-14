@@ -7020,7 +7020,7 @@ static void valleyview_check_pctx(struct drm_i915_private *dev_priv)
 {
 	unsigned long pctx_addr = I915_READ(VLV_PCBR) & ~4095;
 
-	WARN_ON(pctx_addr != dev_priv->mm.stolen_base +
+	WARN_ON(pctx_addr != dev_priv->dsm.start +
 			     dev_priv->vlv_pctx->stolen->start);
 }
 
@@ -7043,7 +7043,12 @@ static void cherryview_setup_pctx(struct drm_i915_private *dev_priv)
 	pcbr = I915_READ(VLV_PCBR);
 	if ((pcbr >> VLV_PCBR_ADDR_SHIFT) == 0) {
 		DRM_DEBUG_DRIVER("BIOS didn't set up PCBR, fixing up\n");
-		paddr = (dev_priv->mm.stolen_base +
+
+		GEM_BUG_ON(range_overflows_t(resource_size_t,
+					     dev_priv->dsm.start,
+					     (ggtt->stolen_size - pctx_size),
+					     U32_MAX));
+		paddr = (dev_priv->dsm.start +
 			 (ggtt->stolen_size - pctx_size));
 
 		pctx_paddr = (paddr & (~4095));
@@ -7065,7 +7070,7 @@ static void valleyview_setup_pctx(struct drm_i915_private *dev_priv)
 		/* BIOS set it up already, grab the pre-alloc'd space */
 		int pcbr_offset;
 
-		pcbr_offset = (pcbr & (~4095)) - dev_priv->mm.stolen_base;
+		pcbr_offset = (pcbr & (~4095)) - dev_priv->dsm.start;
 		pctx = i915_gem_object_create_stolen_for_preallocated(dev_priv,
 								      pcbr_offset,
 								      I915_GTT_OFFSET_NONE,
@@ -7089,7 +7094,11 @@ static void valleyview_setup_pctx(struct drm_i915_private *dev_priv)
 		goto out;
 	}
 
-	pctx_paddr = dev_priv->mm.stolen_base + pctx->stolen->start;
+	GEM_BUG_ON(range_overflows_t(u64,
+				     dev_priv->dsm.start,
+				     pctx->stolen->start,
+				     U32_MAX));
+	pctx_paddr = dev_priv->dsm.start + pctx->stolen->start;
 	I915_WRITE(VLV_PCBR, pctx_paddr);
 
 out:

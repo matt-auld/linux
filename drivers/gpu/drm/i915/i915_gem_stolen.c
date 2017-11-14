@@ -187,7 +187,7 @@ static void g4x_get_stolen_reserved(struct drm_i915_private *dev_priv,
 	uint32_t reg_val = I915_READ(IS_GM45(dev_priv) ?
 				     CTG_STOLEN_RESERVED :
 				     ELK_STOLEN_RESERVED);
-	dma_addr_t stolen_top = dev_priv->mm.stolen_base + ggtt->stolen_size;
+	dma_addr_t stolen_top = dev_priv->dsm.start + ggtt->stolen_size;
 
 	if ((reg_val & G4X_STOLEN_RESERVED_ENABLE) == 0) {
 		*base = 0;
@@ -318,7 +318,7 @@ static void bdw_get_stolen_reserved(struct drm_i915_private *dev_priv,
 		return;
 	}
 
-	stolen_top = dev_priv->mm.stolen_base + ggtt->stolen_size;
+	stolen_top = dev_priv->dsm.start + ggtt->stolen_size;
 
 	*base = reg_val & GEN6_STOLEN_RESERVED_ADDR_MASK;
 
@@ -354,11 +354,14 @@ int i915_gem_init_stolen(struct drm_i915_private *dev_priv)
 	if (ggtt->stolen_size == 0)
 		return 0;
 
-	dev_priv->mm.stolen_base = i915_stolen_to_dma(dev_priv);
-	if (dev_priv->mm.stolen_base == 0)
+	dev_priv->dsm.start = i915_stolen_to_dma(dev_priv);
+	if (dev_priv->dsm.start == 0)
 		return 0;
 
-	stolen_top = dev_priv->mm.stolen_base + ggtt->stolen_size;
+	dev_priv->dsm.end = dev_priv->dsm.start + ggtt->stolen_size - 1;
+	dev_priv->dsm.flags = IORESOURCE_MEM;
+
+	stolen_top = dev_priv->dsm.end + 1;
 	reserved_base = 0;
 	reserved_size = 0;
 
@@ -399,12 +402,12 @@ int i915_gem_init_stolen(struct drm_i915_private *dev_priv)
 		reserved_base = stolen_top;
 	}
 
-	if (reserved_base < dev_priv->mm.stolen_base ||
+	if (reserved_base < dev_priv->dsm.start ||
 	    reserved_base + reserved_size > stolen_top) {
 		dma_addr_t reserved_top = reserved_base + reserved_size;
 		DRM_ERROR("Stolen reserved area [%pad - %pad] outside stolen memory [%pad - %pad]\n",
 			  &reserved_base, &reserved_top,
-			  &dev_priv->mm.stolen_base, &stolen_top);
+			  &dev_priv->dsm.start, &stolen_top);
 		return 0;
 	}
 
@@ -462,7 +465,7 @@ i915_pages_create_for_stolen(struct drm_device *dev,
 	sg->offset = 0;
 	sg->length = size;
 
-	sg_dma_address(sg) = (dma_addr_t)dev_priv->mm.stolen_base + offset;
+	sg_dma_address(sg) = (dma_addr_t)dev_priv->dsm.start + offset;
 	sg_dma_len(sg) = size;
 
 	return st;

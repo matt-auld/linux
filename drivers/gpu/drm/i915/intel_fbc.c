@@ -615,10 +615,16 @@ static int intel_fbc_alloc_cfb(struct intel_crtc *crtc)
 
 		fbc->compressed_llb = compressed_llb;
 
+		GEM_BUG_ON(range_overflows_t(u64, dev_priv->dsm.start,
+					     fbc->compressed_fb.start,
+					     U32_MAX));
+		GEM_BUG_ON(range_overflows_t(u64, dev_priv->dsm.start,
+					     fbc->compressed_llb->start,
+					     U32_MAX));
 		I915_WRITE(FBC_CFB_BASE,
-			   dev_priv->mm.stolen_base + fbc->compressed_fb.start);
+			   dev_priv->dsm.start + fbc->compressed_fb.start);
 		I915_WRITE(FBC_LL_BASE,
-			   dev_priv->mm.stolen_base + compressed_llb->start);
+			   dev_priv->dsm.start + compressed_llb->start);
 	}
 
 	DRM_DEBUG_KMS("reserved %llu bytes of contiguous stolen space for FBC, threshold: %d\n",
