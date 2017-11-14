@@ -2259,6 +2259,10 @@ struct drm_i915_private {
 	 * while ggtt->stolen_size gives us the total size of the stolen region.
 	 */
 	struct resource dsm;
+	/**
+	 * Reseved portion of Data Stolen Memory
+	 */
+	struct resource dsm_reserved;
 
 	void __iomem *regs;
 

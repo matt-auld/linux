@@ -383,8 +383,6 @@ struct i915_ggtt {
 	 */
 	u32 stolen_size;		/* Total size of stolen memory */
 	u32 stolen_usable_size;	/* Total size minus reserved ranges */
-	u32 stolen_reserved_base;
-	u32 stolen_reserved_size;
 
 	/** "Graphics Stolen Memory" holds the global PTEs */
 	void __iomem *gsm;
