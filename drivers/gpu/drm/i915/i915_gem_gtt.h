@@ -371,7 +371,7 @@ struct i915_ggtt {
 
 	struct io_mapping mappable_io;	/* Mapping to our CPU mappable region */
 	struct resource mappable;       /* GMADR resource */
-	u64 mappable_end;		/* Total mappable size that we can CPU map */
+	resource_size_t mappable_end;	/* Total mappable size that we can CPU map */
 
 	/* Stolen memory is segmented in hardware with different portions
 	 * offlimits to certain functions.
@@ -381,8 +381,8 @@ struct i915_ggtt {
 	 * avoid the first page! The upper end of stolen memory is reserved for
 	 * hardware functions and similarly removed from the accessible range.
 	 */
-	u32 stolen_size;		/* Total size of stolen memory */
-	u32 stolen_usable_size;	/* Total size minus reserved ranges */
+	resource_size_t stolen_size;		/* Total size of stolen memory */
+	resource_size_t stolen_usable_size;	/* Total size minus reserved ranges */
 
 	/** "Graphics Stolen Memory" holds the global PTEs */
 	void __iomem *gsm;
