@@ -425,12 +425,12 @@ static resource_size_t __init chv_stolen_size(int num, int slot, int func)
 	 * 0x11 to 0x16: 4MB increments starting at 8MB
 	 * 0x17 to 0x1d: 4MB increments start at 36MB
 	 */
-	if (gms < 0x11)
-		return gms * MB(32);
-	else if (gms < 0x17)
+	if (gms >= 0x17)
+		return (gms - 0x17) * MB(4) + MB(36);
+	else if (gms >= 0x11)
 		return (gms - 0x11) * MB(4) + MB(8);
 	else
-		return (gms - 0x17) * MB(4) + MB(36);
+		return gms * MB(32);
 }
 
 static resource_size_t __init gen9_stolen_size(int num, int slot, int func)
@@ -443,10 +443,10 @@ static resource_size_t __init gen9_stolen_size(int num, int slot, int func)
 
 	/* 0x0  to 0xef: 32MB increments starting at 0MB */
 	/* 0xf0 to 0xfe: 4MB increments starting at 4MB */
-	if (gms < 0xf0)
-		return gms * MB(32);
-	else
+	if (gms >= 0xf0)
 		return (gms - 0xf0) * MB(4) + MB(4);
+	else
+		return gms * MB(32);
 }
 
 struct intel_early_ops {
