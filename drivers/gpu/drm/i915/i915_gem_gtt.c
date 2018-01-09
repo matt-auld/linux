@@ -1090,7 +1090,17 @@ static void gen8_ppgtt_insert_huge_entries(struct i915_vma *vma,
 		gen8_pte_t *vaddr;
 		u16 index, max;
 
-		if (vma->page_sizes.sg & I915_GTT_PAGE_SIZE_2M &&
+		if (unlikely(vma->page_sizes.sg & I915_GTT_PAGE_SIZE_1G) &&
+		    IS_ALIGNED(iter->dma, I915_GTT_PAGE_SIZE_1G) &&
+		    rem >= I915_GTT_PAGE_SIZE_1G && !(idx.pte | idx.pde)) {
+			index = idx.pdpe;
+			max = GEN8_PML4ES_PER_PML4;
+			page_size = I915_GTT_PAGE_SIZE_1G;
+
+			encode |= GEN8_PDPE_PS_1G;
+
+			vaddr = kmap_atomic_px(pdp);
+		} else if (vma->page_sizes.sg & I915_GTT_PAGE_SIZE_2M &&
 		    IS_ALIGNED(iter->dma, I915_GTT_PAGE_SIZE_2M) &&
 		    rem >= I915_GTT_PAGE_SIZE_2M && !idx.pte) {
 			index = idx.pde;

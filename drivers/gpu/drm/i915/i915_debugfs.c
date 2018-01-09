@@ -115,10 +115,14 @@ stringify_page_sizes(unsigned int page_sizes, char *buf, size_t len)
 		return "64K";
 	case I915_GTT_PAGE_SIZE_2M:
 		return "2M";
+	case I915_GTT_PAGE_SIZE_1G:
+		return "1G";
 	default:
 		if (!buf)
 			return "M";
 
+		if (page_sizes & I915_GTT_PAGE_SIZE_1G)
+			x += snprintf(buf + x, len - x, "1G, ");
 		if (page_sizes & I915_GTT_PAGE_SIZE_2M)
 			x += snprintf(buf + x, len - x, "2M, ");
 		if (page_sizes & I915_GTT_PAGE_SIZE_64K)

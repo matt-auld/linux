@@ -30,6 +30,7 @@
 #include "i915_random.h"
 
 static const unsigned int page_sizes[] = {
+	I915_GTT_PAGE_SIZE_1G,
 	I915_GTT_PAGE_SIZE_2M,
 	I915_GTT_PAGE_SIZE_64K,
 	I915_GTT_PAGE_SIZE_4K,
@@ -55,8 +56,14 @@ static void huge_pages_free_pages(struct sg_table *st)
 	struct scatterlist *sg;
 
 	for (sg = st->sgl; sg; sg = __sg_next(sg)) {
-		if (sg_page(sg))
-			__free_pages(sg_page(sg), get_order(sg->length));
+		if (sg_page(sg)) {
+			unsigned int order = get_order(sg->length);
+
+			if (order < MAX_ORDER)
+				__free_pages(sg_page(sg), order);
+			else
+				free_contig_pages(sg_page(sg), sg->length >> PAGE_SHIFT);
+		}
 	}
 
 	sg_free_table(st);
@@ -99,8 +106,13 @@ static int get_huge_pages(struct drm_i915_gem_object *obj)
 		do {
 			struct page *page;
 
-			GEM_BUG_ON(order >= MAX_ORDER);
-			page = alloc_pages(GFP | __GFP_ZERO, order);
+			if (order < MAX_ORDER)
+				page = alloc_pages(GFP | __GFP_ZERO, order);
+			else
+				page = find_alloc_contig_pages(page_size >> PAGE_SHIFT,
+							       GFP | __GFP_ZERO,
+							       0, 0);
+
 			if (!page)
 				goto err;
 
@@ -1072,6 +1084,9 @@ static int __igt_write_huge(struct i915_gem_context *ctx,
 		goto out_vma_close;
 	}
 
+	if (vma->page_sizes.gtt == I915_GTT_PAGE_SIZE_1G)
+		pr_info("long live 1g pages!\n");
+
 	err = igt_check_page_sizes(vma);
 	if (err)
 		goto out_vma_unpin;
@@ -1262,6 +1277,8 @@ static int igt_ppgtt_exhaust_huge(void *arg)
 			}
 
 			i915_gem_object_unpin_pages(obj);
+			/* 1G pages don't grow on trees */
+			__i915_gem_object_put_pages(obj, I915_MM_NORMAL);
 			i915_gem_object_put(obj);
 		}
 	}
