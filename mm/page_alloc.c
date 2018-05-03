@@ -7787,9 +7787,10 @@ static int __alloc_contig_migrate_range(struct compact_control *cc,
  * alloc_contig_range() -- tries to allocate given range of pages
  * @start:	start PFN to allocate
  * @end:	one-past-the-last PFN to allocate
- * @migratetype:	migratetype of the underlaying pageblocks (either
- *			#MIGRATE_MOVABLE or #MIGRATE_CMA).  All pageblocks
- *			in range must have the same migratetype and it must
+ * @migratetype:	migratetype of the underlaying pageblocks.  All
+ *			pageblocks in range must have the same migratetype.
+ *			migratetype is typically MIGRATE_MOVABLE or
+ *			MIGRATE_CMA, but this is not a requirement.
  *			be either of the two.
  * @gfp_mask:	GFP mask to use during compaction
  *
@@ -7840,15 +7841,15 @@ int alloc_contig_range(unsigned long start, unsigned long end,
 	 * allocator removing them from the buddy system.  This way
 	 * page allocator will never consider using them.
 	 *
-	 * This lets us mark the pageblocks back as
-	 * MIGRATE_CMA/MIGRATE_MOVABLE so that free pages in the
-	 * aligned range but not in the unaligned, original range are
-	 * put back to page allocator so that buddy can use them.
+	 * This lets us mark the pageblocks back as their original
+	 * migrate type so that free pages in the  aligned range but
+	 * not in the unaligned, original range are put back to page
+	 * allocator so that buddy can use them.
 	 */
 
 	ret = start_isolate_page_range(pfn_max_align_down(start),
 				       pfn_max_align_up(end), migratetype,
-				       false);
+				       false, true);
 	if (ret)
 		return ret;
 
