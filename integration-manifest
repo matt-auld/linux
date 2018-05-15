@@ -1,0 +1,30 @@
+drm-upstream drm-fixes 76ef6b28ea4f81c3d511866a9b31392caa833126
+	drm: set FMODE_UNSIGNED_OFFSET for drm files
+drm-misc drm-misc-fixes 7f6df440b8623c441c42d070bf592e2d2c1fa9bb
+	drm: Match sysfs name in link removal to link creation
+drm-intel drm-intel-fixes c102b80147147ff51ec5c2e40c80d410a89a579a
+	drm/i915/gen9: Add WaClearHIZ_WM_CHICKEN3 for bxt and glk
+drm-amd drm-amd-fixes 2b702e72e33bbdec0764cfb6e1dd00fe1142ae55
+	Merge tag 'drm-misc-fixes-2017-09-28-1' of git://anongit.freedesktop.org/git/drm-misc into drm-fixes
+drm drm-next 2045b22461c07a88dc3d2bab3cbfc6dc0c602fd4
+	Merge tag 'drm-misc-next-2018-05-15' of git://anongit.freedesktop.org/drm/drm-misc into drm-next
+drm-misc drm-misc-next-fixes 3131f209468d1514af378dd46eb34123d0af84ff
+	drm/vc4: Fix leak of the file_priv that stored the perfmon.
+drm-intel drm-intel-next-fixes 6d08b06e67cd117f6992c46611dfb4ce267cd71e
+	Linux 4.17-rc2
+drm-amd drm-amd-next-fixes 2bd6bf03f4c1c59381d62c61d03f6cc3fe71f66e
+	Linux 4.14-rc1
+drm-misc drm-misc-next aefff4915632185e286c8c94f6f5ccb939fc51d7
+	drm/xen-front: fix spelling mistake: "conector" -> "connector"
+drm-intel drm-intel-next-queued 01f83786f9ab9c8883ce634cb9a0de51086ad7ea
+	drm/i915: Update DRIVER_DATE to 20180514
+drm-amd drm-amd-next 754270c7c56292e97d0eff924a5d5d83f92add07
+	Merge branch 'drm-next-4.15' of git://people.freedesktop.org/~agd5f/linux into drm-next
+sound-upstream for-linus c99f0802e42fcd38e84ee4d306691805ebed204f
+	ALSA: usb-audio: Use Class Specific EP for UAC3 devices.
+sound-upstream for-next 710669455d9e6978336dcbcb220024fb64ec2d38
+	ALSA: usb-audio: UAC3: Parse Input Terminal number of channels.
+drm-intel topic/core-for-CI 153328a3eb70e885212ac6ce84f6fcee5097e16c
+	Documentation: typec.rst: Use literal-block element with ascii art
+drm-misc topic/vkms 68266f1c08db731fa7c3a0903bf890fc76ce9345
+	gpu: drm: qxl: Adding new typedef vm_fault_t
