@@ -42,6 +42,9 @@ i915_gem_object_get_pages_buddy(struct drm_i915_gem_object *obj)
 		return -ENOMEM;
 	}
 
+	if (obj->flags & I915_BO_ALLOC_CONTIGUOUS)
+		flags = I915_ALLOC_CONTIGUOUS;
+
 	ret = __intel_memory_region_get_pages_buddy(mem, size, flags, blocks);
 	if (ret)
 		goto err_free_sg;
@@ -98,10 +101,12 @@ err_free_sg:
 }
 
 void i915_gem_object_init_memory_region(struct drm_i915_gem_object *obj,
-					struct intel_memory_region *mem)
+					struct intel_memory_region *mem,
+					unsigned long flags)
 {
 	INIT_LIST_HEAD(&obj->mm.blocks);
 	obj->mm.region= mem;
+	obj->flags = flags;
 
 	mutex_lock(&mem->obj_lock);
 	list_add(&obj->mm.region_link, &mem->objects);
@@ -121,6 +126,8 @@ i915_gem_object_create_region(struct intel_memory_region *mem,
 			      unsigned int flags)
 {
 	struct drm_i915_gem_object *obj;
+
+	GEM_BUG_ON(flags & ~I915_BO_ALLOC_FLAGS);
 
 	if (!mem)
 		return ERR_PTR(-ENODEV);

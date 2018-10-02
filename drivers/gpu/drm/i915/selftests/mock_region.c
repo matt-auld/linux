@@ -22,6 +22,9 @@ mock_object_create(struct intel_memory_region *mem,
 	struct drm_i915_private *i915 = mem->i915;
 	struct drm_i915_gem_object *obj;
 
+	if (flags & I915_BO_ALLOC_CONTIGUOUS)
+		size = roundup_pow_of_two(size);
+
 	if (size > BIT(mem->mm.max_order) * mem->mm.chunk_size)
 		return ERR_PTR(-E2BIG);
 
@@ -36,7 +39,7 @@ mock_object_create(struct intel_memory_region *mem,
 
 	i915_gem_object_set_cache_coherency(obj, I915_CACHE_NONE);
 
-	i915_gem_object_init_memory_region(obj, mem);
+	i915_gem_object_init_memory_region(obj, mem, flags);
 
 	return obj;
 }
