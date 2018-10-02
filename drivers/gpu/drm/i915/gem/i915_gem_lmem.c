@@ -225,6 +225,22 @@ void __iomem *i915_gem_object_lmem_io_map(struct drm_i915_gem_object *obj,
 	return io_mapping_map_wc(&obj->mm.region->iomap, offset, size);
 }
 
+resource_size_t i915_gem_object_lmem_io_offset(struct drm_i915_gem_object *obj,
+					       unsigned long n)
+{
+	struct intel_memory_region *mem = obj->mm.region;
+	dma_addr_t daddr;
+
+	/*
+	 * XXX: It's not a dma address, more a device address or physical
+	 * offset, so we are clearly abusing the semantics of the sg_table
+	 * here, and elsewhere like in the gtt paths.
+	 */
+	daddr = i915_gem_object_get_dma_address(obj, n);
+
+	return mem->io_start + daddr;
+}
+
 bool i915_gem_object_is_lmem(struct drm_i915_gem_object *obj)
 {
 	struct intel_memory_region *region = obj->mm.region;
