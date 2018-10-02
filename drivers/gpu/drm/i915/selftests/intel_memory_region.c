@@ -78,17 +78,17 @@ static int igt_mock_fill(void *arg)
 
 static void igt_mark_evictable(struct drm_i915_gem_object *obj)
 {
-	i915_gem_object_unpin_pages(obj);
+	if (i915_gem_object_has_pinned_pages(obj))
+		i915_gem_object_unpin_pages(obj);
 	obj->mm.madv = I915_MADV_DONTNEED;
 	list_move(&obj->region_link, &obj->memory_region->purgeable);
 }
 
-static int igt_mock_shrink(void *arg)
+static int igt_frag_region(struct intel_memory_region *mem,
+			   struct list_head *objects)
 {
-	struct intel_memory_region *mem = arg;
 	struct drm_i915_gem_object *obj;
 	unsigned long n_objects;
-	LIST_HEAD(objects);
 	resource_size_t target;
 	resource_size_t total;
 	int err = 0;
@@ -106,7 +106,7 @@ static int igt_mock_shrink(void *arg)
 			goto err_close_objects;
 		}
 
-		list_add(&obj->st_link, &objects);
+		list_add(&obj->st_link, objects);
 
 		err = i915_gem_object_pin_pages(obj);
 		if (err)
@@ -119,6 +119,39 @@ static int igt_mock_shrink(void *arg)
 		if (n_objects % 2)
 			igt_mark_evictable(obj);
 	}
+
+	return 0;
+
+err_close_objects:
+	close_objects(objects);
+	return err;
+}
+
+static void igt_defrag_region(struct list_head *objects)
+{
+	struct drm_i915_gem_object *obj;
+
+	list_for_each_entry(obj, objects, st_link) {
+		if (obj->mm.madv == I915_MADV_WILLNEED)
+			igt_mark_evictable(obj);
+	}
+}
+
+static int igt_mock_shrink(void *arg)
+{
+	struct intel_memory_region *mem = arg;
+	struct drm_i915_gem_object *obj;
+	LIST_HEAD(objects);
+	resource_size_t target;
+	resource_size_t total;
+	int err;
+
+	err = igt_frag_region(mem, &objects);
+	if (err)
+		return err;
+
+	total = resource_size(&mem->region);
+	target = mem->mm.min_size;
 
 	while (target <= total / 2) {
 		obj = i915_gem_object_create_region(mem, target, 0);
@@ -151,11 +184,120 @@ err_close_objects:
 	return err;
 }
 
+static int igt_mock_continuous(void *arg)
+{
+	struct intel_memory_region *mem = arg;
+	struct drm_i915_gem_object *obj;
+	LIST_HEAD(objects);
+	resource_size_t target;
+	resource_size_t total;
+	int err;
+
+	err = igt_frag_region(mem, &objects);
+	if (err)
+		return err;
+
+	total = resource_size(&mem->region);
+	target = total / 2;
+
+	/*
+	 * Sanity check that we can allocate all of the available fragmented
+	 * space.
+	 */
+	obj = i915_gem_object_create_region(mem, target, 0);
+	if (IS_ERR(obj)) {
+		err = PTR_ERR(obj);
+		goto err_close_objects;
+	}
+
+	list_add(&obj->st_link, &objects);
+
+	err = i915_gem_object_pin_pages(obj);
+	if (err) {
+		pr_err("failed to allocate available space\n");
+		goto err_close_objects;
+	}
+
+	igt_mark_evictable(obj);
+
+	/* Try the smallest possible size -- should succeed */
+	obj = i915_gem_object_create_region(mem, mem->mm.min_size,
+					    I915_BO_ALLOC_CONTIGUOUS);
+	if (IS_ERR(obj)) {
+		err = PTR_ERR(obj);
+		goto err_close_objects;
+	}
+
+	list_add(&obj->st_link, &objects);
+
+	err = i915_gem_object_pin_pages(obj);
+	if (err) {
+		pr_err("failed to allocate smallest possible size\n");
+		goto err_close_objects;
+	}
+
+	igt_mark_evictable(obj);
+
+	if (obj->mm.pages->nents != 1) {
+		pr_err("[1]object spans multiple sg entries\n");
+		err = -EINVAL;
+		goto err_close_objects;
+	}
+
+	/*
+	 * Even though there is enough free space for the allocation, we
+	 * shouldn't be able to allocate it, given that it is fragmented, and
+	 * non-continuous.
+	 */
+	obj = i915_gem_object_create_region(mem, target, I915_BO_ALLOC_CONTIGUOUS);
+	if (IS_ERR(obj)) {
+		err = PTR_ERR(obj);
+		goto err_close_objects;
+	}
+
+	list_add(&obj->st_link, &objects);
+
+	err = i915_gem_object_pin_pages(obj);
+	if (!err) {
+		pr_err("expected allocation to fail\n");
+		err = -EINVAL;
+		goto err_close_objects;
+	}
+
+	igt_defrag_region(&objects);
+
+	/* Should now succeed */
+	obj = i915_gem_object_create_region(mem, target, I915_BO_ALLOC_CONTIGUOUS);
+	if (IS_ERR(obj)) {
+		err = PTR_ERR(obj);
+		goto err_close_objects;
+	}
+
+	list_add(&obj->st_link, &objects);
+
+	err = i915_gem_object_pin_pages(obj);
+	if (err) {
+		pr_err("failed to allocate from defraged area\n");
+		goto err_close_objects;
+	}
+
+	if (obj->mm.pages->nents != 1) {
+		pr_err("object spans multiple sg entries\n");
+		err = -EINVAL;
+	}
+
+err_close_objects:
+	close_objects(&objects);
+
+	return err;
+}
+
 int intel_memory_region_mock_selftests(void)
 {
 	static const struct i915_subtest tests[] = {
 		SUBTEST(igt_mock_fill),
 		SUBTEST(igt_mock_shrink),
+		SUBTEST(igt_mock_continuous),
 	};
 	struct intel_memory_region *mem;
 	struct drm_i915_private *i915;

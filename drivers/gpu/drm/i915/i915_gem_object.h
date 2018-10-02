@@ -163,6 +163,8 @@ struct drm_i915_gem_object {
 	 * activity?
 	 */
 #define I915_BO_ACTIVE_REF 0
+#define I915_BO_ALLOC_CONTIGUOUS (1<<1)
+#define I915_BO_ALLOC_FLAGS (I915_BO_ALLOC_CONTIGUOUS)
 
 	/*
 	 * Is the object to be mapped as read-only to the GPU

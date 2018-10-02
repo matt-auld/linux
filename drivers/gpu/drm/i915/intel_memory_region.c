@@ -91,6 +91,7 @@ i915_memory_region_get_pages_buddy(struct drm_i915_gem_object *obj)
 {
 	struct intel_memory_region *mem = obj->memory_region;
 	resource_size_t size = obj->base.size;
+	unsigned int flags = obj->flags;
 	struct sg_table *st;
 	struct scatterlist *sg;
 	unsigned int sg_page_sizes;
@@ -131,7 +132,7 @@ retry:
 			if (!IS_ERR(block))
 				break;
 
-			if (!order--) {
+			if (flags & I915_BO_ALLOC_CONTIGUOUS || !order--) {
 				resource_size_t target;
 				int err;
 
@@ -216,6 +217,9 @@ i915_gem_object_create_region(struct intel_memory_region *mem,
 	if (!mem)
 		return ERR_PTR(-ENODEV);
 
+	if (flags & ~I915_BO_ALLOC_FLAGS)
+		return ERR_PTR(-EINVAL);
+
 	size = round_up(size, mem->min_page_size);
 
 	GEM_BUG_ON(!size);
@@ -233,6 +237,7 @@ i915_gem_object_create_region(struct intel_memory_region *mem,
 
 	INIT_LIST_HEAD(&obj->blocks);
 	obj->memory_region = mem;
+	obj->flags = flags;
 
 	mutex_lock(&mem->obj_lock);
 	list_add(&obj->region_link, &mem->objects);
