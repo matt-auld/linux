@@ -93,6 +93,8 @@
 #include "gt/intel_timeline.h"
 #include "i915_vma.h"
 
+#include "intel_region_lmem.h"
+
 #include "intel_gvt.h"
 
 /* General customization:
@@ -1341,6 +1343,8 @@ struct drm_i915_private {
 	 */
 	resource_size_t stolen_usable_size;	/* Total size minus reserved ranges */
 
+	struct intel_memory_region *regions[ARRAY_SIZE(intel_region_map)];
+
 	struct intel_uncore uncore;
 
 	struct i915_virtual_gpu vgpu;
@@ -2289,6 +2293,7 @@ IS_SUBPLATFORM(const struct drm_i915_private *i915,
 #define HAS_IPC(dev_priv)		 (INTEL_INFO(dev_priv)->display.has_ipc)
 
 #define HAS_REGION(i915, i) (INTEL_INFO(i915)->memory_regions & (i))
+#define HAS_LMEM(i915) HAS_REGION(i915, REGION_LMEM)
 
 /*
  * For now, anything with a GuC requires uCode loading, and then supports
