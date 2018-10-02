@@ -179,6 +179,9 @@ retry:
 
 	i915_sg_trim(st);
 
+	if (flags & I915_BO_ALLOC_VOLATILE)
+		obj->mm.madv = I915_MADV_DONTNEED;
+
 	__i915_gem_object_set_pages(obj, st, sg_page_sizes);
 
 	return 0;
@@ -240,7 +243,12 @@ i915_gem_object_create_region(struct intel_memory_region *mem,
 	obj->flags = flags;
 
 	mutex_lock(&mem->obj_lock);
-	list_add(&obj->region_link, &mem->objects);
+
+	if (flags & I915_BO_ALLOC_VOLATILE)
+		list_add(&obj->region_link, &mem->purgeable);
+	else
+		list_add(&obj->region_link, &mem->objects);
+
 	mutex_unlock(&mem->obj_lock);
 
 	i915_gem_object_set_cache_coherency(obj, obj->cache_level);

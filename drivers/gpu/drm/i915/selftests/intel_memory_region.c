@@ -292,12 +292,66 @@ err_close_objects:
 	return err;
 }
 
+static int igt_mock_volatile(void *arg)
+{
+	struct intel_memory_region *mem = arg;
+	struct drm_i915_gem_object *obj;
+	int err;
+
+	obj = i915_gem_object_create_region(mem, PAGE_SIZE, 0);
+	if (IS_ERR(obj))
+		return PTR_ERR(obj);
+
+	err = i915_gem_object_pin_pages(obj);
+	if (err)
+		goto err_put;
+
+	i915_gem_object_unpin_pages(obj);
+
+	err = i915_memory_region_shrink(mem, PAGE_SIZE);
+	if (err != -ENOSPC) {
+		pr_err("shrink memory region\n");
+		goto err_put;
+	}
+
+	obj = i915_gem_object_create_region(mem, PAGE_SIZE, I915_BO_ALLOC_VOLATILE);
+	if (IS_ERR(obj))
+		return PTR_ERR(obj);
+
+	if (!(obj->flags & I915_BO_ALLOC_VOLATILE)) {
+		pr_err("missing flags\n");
+		goto err_put;
+	}
+
+	err = i915_gem_object_pin_pages(obj);
+	if (err)
+		goto err_put;
+
+	i915_gem_object_unpin_pages(obj);
+
+	err = i915_memory_region_shrink(mem, PAGE_SIZE);
+	if (err) {
+		pr_err("failed to shrink memory\n");
+		goto err_put;
+	}
+
+	if (i915_gem_object_has_pages(obj)) {
+		pr_err("object pages not discarded\n");
+		err = -EINVAL;
+	}
+
+err_put:
+	i915_gem_object_put(obj);
+	return err;
+}
+
 int intel_memory_region_mock_selftests(void)
 {
 	static const struct i915_subtest tests[] = {
 		SUBTEST(igt_mock_fill),
 		SUBTEST(igt_mock_shrink),
 		SUBTEST(igt_mock_continuous),
+		SUBTEST(igt_mock_volatile),
 	};
 	struct intel_memory_region *mem;
 	struct drm_i915_private *i915;
