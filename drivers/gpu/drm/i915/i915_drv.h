@@ -1545,6 +1545,8 @@ struct drm_i915_private {
 	struct intel_engine_cs *engine[I915_NUM_ENGINES];
 	/* Context used internally to idle the GPU and setup initial state */
 	struct i915_gem_context *kernel_context;
+	/* Context used internally for various blitting operations */
+	struct i915_gem_context *blitter_context;
 	/* Context only to be used for injecting preemption commands */
 	struct i915_gem_context *preempt_context;
 	struct intel_engine_cs *engine_class[MAX_ENGINE_CLASS + 1]

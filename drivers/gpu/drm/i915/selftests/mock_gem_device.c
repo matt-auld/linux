@@ -248,6 +248,10 @@ struct drm_i915_private *mock_gem_device(void)
 	if (!i915->engine[RCS])
 		goto err_context;
 
+	i915->blitter_context = mock_context(i915, NULL);
+	if (!i915->blitter_context)
+		goto err_context;
+
 	mutex_unlock(&i915->drm.struct_mutex);
 
 	WARN_ON(i915_gemfs_init(i915));

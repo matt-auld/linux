@@ -583,6 +583,18 @@ int i915_gem_contexts_init(struct drm_i915_private *dev_priv)
 	GEM_BUG_ON(!atomic_read(&ctx->hw_id_pin_count));
 	dev_priv->kernel_context = ctx;
 
+	ctx = i915_gem_context_create_kernel(dev_priv, I915_PRIORITY_NORMAL);
+	if (IS_ERR(ctx)) {
+		DRM_ERROR("Failed to create blitter global context\n");
+		return PTR_ERR(ctx);
+	}
+
+	/*
+	 * XXX: one idea here is do s/kernel_context/idle_context/, then use the
+	 * kernel_context for doing things like blitting...
+	 */
+	dev_priv->blitter_context = ctx;
+
 	/* highest priority; preempting task */
 	if (needs_preempt_context(dev_priv)) {
 		ctx = i915_gem_context_create_kernel(dev_priv, INT_MAX);
@@ -615,6 +627,7 @@ void i915_gem_contexts_fini(struct drm_i915_private *i915)
 
 	if (i915->preempt_context)
 		destroy_kernel_context(&i915->preempt_context);
+	destroy_kernel_context(&i915->blitter_context);
 	destroy_kernel_context(&i915->kernel_context);
 
 	/* Must free all deferred contexts (via flush_workqueue) first */
