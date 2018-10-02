@@ -77,6 +77,7 @@
 
 #include "intel_device_info.h"
 #include "intel_runtime_pm.h"
+#include "intel_memory_region.h"
 #include "intel_uc.h"
 #include "intel_uncore.h"
 #include "intel_wakeref.h"

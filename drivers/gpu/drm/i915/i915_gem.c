@@ -1815,4 +1815,5 @@ void i915_gem_track_fb(struct drm_i915_gem_object *old,
 #if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)
 #include "selftests/mock_gem_device.c"
 #include "selftests/i915_gem.c"
+#include "selftests/intel_memory_region.c"
 #endif

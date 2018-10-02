@@ -59,6 +59,7 @@ i915-y += i915_drv.o \
 i915-y += \
 	i915_memcpy.o \
 	i915_mm.o \
+	intel_memory_region.o \
 	i915_sw_fence.o \
 	i915_syncmap.o \
 	i915_user_extensions.o
