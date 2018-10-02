@@ -2808,6 +2808,8 @@ void *i915_gem_object_alloc(struct drm_i915_private *dev_priv);
 void i915_gem_object_free(struct drm_i915_gem_object *obj);
 void i915_gem_object_init(struct drm_i915_gem_object *obj,
 			 const struct drm_i915_gem_object_ops *ops);
+int i915_gem_object_clear_blt(struct i915_gem_context *ctx,
+			      struct drm_i915_gem_object *obj);
 struct drm_i915_gem_object *
 i915_gem_object_create(struct drm_i915_private *dev_priv, u64 size);
 struct drm_i915_gem_object *

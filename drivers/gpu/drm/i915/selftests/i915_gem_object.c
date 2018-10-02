@@ -628,6 +628,75 @@ err_obj:
 	goto out;
 }
 
+static int igt_fill_blt(void *arg)
+{
+	struct drm_i915_private *i915 = arg;
+	struct drm_i915_gem_object *obj;
+	struct i915_gem_context *ctx;
+	struct drm_file *file;
+	struct rnd_state prng;
+	IGT_TIMEOUT(end);
+	u32 *vaddr;
+	int err;
+
+	file = mock_file(i915);
+	if (IS_ERR(file))
+		return PTR_ERR(file);
+
+	ctx = live_context(i915, file);
+	if (IS_ERR(ctx)) {
+		err = PTR_ERR(ctx);
+		goto err_file;
+	}
+
+	obj = i915_gem_object_create_internal(i915, SZ_2M);
+	if (IS_ERR(obj)) {
+		err = PTR_ERR(obj);
+		goto err_file;
+	}
+
+	vaddr = i915_gem_object_pin_map(obj, I915_MAP_WB);
+	if (IS_ERR(vaddr)) {
+		err = PTR_ERR(vaddr);
+		goto err_put;
+	}
+
+	prandom_seed_state(&prng, i915_selftest.random_seed);
+
+	mutex_lock(&i915->drm.struct_mutex);
+
+	do {
+		u32 val = prandom_u32_state(&prng);
+		u32 i;
+
+		err = i915_gem_object_fill_blt(ctx, obj, val);
+		if (err)
+			break;
+
+		err = i915_gem_object_set_to_cpu_domain(obj, false);
+		if (err)
+			break;
+
+		for (i = 0; i < obj->base.size / sizeof(u32); ++i) {
+			if (vaddr[i] != val) {
+				pr_err("vaddr[%d]=%u, expected=%u\n", i,
+				       val, vaddr[i]);
+				err = -EINVAL;
+				break;
+			}
+		}
+	} while (!time_after(jiffies, end));
+
+	mutex_unlock(&i915->drm.struct_mutex);
+
+	i915_gem_object_unpin_map(obj);
+err_put:
+	i915_gem_object_put(obj);
+err_file:
+	mock_file_free(i915, file);
+	return err;
+}
+
 int i915_gem_object_mock_selftests(void)
 {
 	static const struct i915_subtest tests[] = {
@@ -653,6 +722,7 @@ int i915_gem_object_live_selftests(struct drm_i915_private *i915)
 		SUBTEST(igt_gem_huge),
 		SUBTEST(igt_partial_tiling),
 		SUBTEST(igt_mmap_offset_exhaustion),
+		SUBTEST(igt_fill_blt),
 	};
 
 	return i915_subtests(tests, i915);
