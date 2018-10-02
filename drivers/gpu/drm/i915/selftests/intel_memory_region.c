@@ -345,6 +345,201 @@ err_put:
 	return err;
 }
 
+static struct i915_vma *
+igt_gpu_write_dw(struct i915_vma *vma, u64 offset, u32 val)
+{
+	struct drm_i915_private *i915 = to_i915(vma->obj->base.dev);
+	const int gen = INTEL_GEN(vma->vm->i915);
+	unsigned int count = vma->size >> PAGE_SHIFT;
+	struct drm_i915_gem_object *obj;
+	struct i915_vma *batch;
+	unsigned int size;
+	u32 *cmd;
+	int n;
+	int err;
+
+	size = (1 + 4 * count) * sizeof(u32);
+	size = round_up(size, PAGE_SIZE);
+	obj = i915_gem_object_create_internal(i915, size);
+	if (IS_ERR(obj))
+		return ERR_CAST(obj);
+
+	cmd = i915_gem_object_pin_map(obj, I915_MAP_WB);
+	if (IS_ERR(cmd)) {
+		err = PTR_ERR(cmd);
+		goto err;
+	}
+
+	offset += vma->node.start;
+
+	for (n = 0; n < count; n++) {
+		if (gen >= 8) {
+			*cmd++ = MI_STORE_DWORD_IMM_GEN4;
+			*cmd++ = lower_32_bits(offset);
+			*cmd++ = upper_32_bits(offset);
+			*cmd++ = val;
+		} else if (gen >= 4) {
+			*cmd++ = MI_STORE_DWORD_IMM_GEN4 |
+				(gen < 6 ? 1 << 22 : 0);
+			*cmd++ = 0;
+			*cmd++ = offset;
+			*cmd++ = val;
+		} else {
+			*cmd++ = MI_STORE_DWORD_IMM | 1 << 22;
+			*cmd++ = offset;
+			*cmd++ = val;
+		}
+
+		offset += PAGE_SIZE;
+	}
+
+	*cmd = MI_BATCH_BUFFER_END;
+
+	i915_gem_object_unpin_map(obj);
+
+	err = i915_gem_object_set_to_gtt_domain(obj, false);
+	if (err)
+		goto err;
+
+	batch = i915_vma_instance(obj, vma->vm, NULL);
+	if (IS_ERR(batch)) {
+		err = PTR_ERR(batch);
+		goto err;
+	}
+
+	err = i915_vma_pin(batch, 0, 0, PIN_USER);
+	if (err)
+		goto err;
+
+	return batch;
+
+err:
+	i915_gem_object_put(obj);
+
+	return ERR_PTR(err);
+}
+
+static int igt_gpu_write(struct i915_vma *vma,
+			 struct i915_gem_context *ctx,
+			 struct intel_engine_cs *engine,
+			 u32 dword,
+			 u32 value)
+{
+	struct i915_request *rq;
+	struct i915_vma *batch;
+	int flags = 0;
+	int err;
+
+	GEM_BUG_ON(!intel_engine_can_store_dword(engine));
+
+	err = i915_gem_object_set_to_gtt_domain(vma->obj, true);
+	if (err)
+		return err;
+
+	rq = i915_request_alloc(engine, ctx);
+	if (IS_ERR(rq))
+		return PTR_ERR(rq);
+
+	batch = igt_gpu_write_dw(vma, dword * sizeof(u32), value);
+	if (IS_ERR(batch)) {
+		err = PTR_ERR(batch);
+		goto err_request;
+	}
+
+	err = i915_vma_move_to_active(batch, rq, 0);
+	i915_vma_unpin(batch);
+	i915_vma_close(batch);
+	if (err)
+		goto err_request;
+
+	i915_gem_object_set_active_reference(batch->obj);
+
+	err = engine->emit_bb_start(rq,
+				    batch->node.start, batch->node.size,
+				    flags);
+	if (err)
+		goto err_request;
+
+	err = i915_vma_move_to_active(vma, rq, EXEC_OBJECT_WRITE);
+	if (err)
+		i915_request_skip(rq, err);
+
+err_request:
+	i915_request_add(rq);
+
+	return err;
+}
+
+static int igt_cpu_check(struct drm_i915_gem_object *obj, u32 dword, u32 val)
+{
+	unsigned long n;
+	int err;
+
+	err = i915_gem_object_set_to_wc_domain(obj, false);
+	if (err)
+		return err;
+
+	err = i915_gem_object_pin_pages(obj);
+	if (err)
+		return err;
+
+	for (n = 0; n < obj->base.size >> PAGE_SHIFT; ++n) {
+		u32 __iomem *base;
+		u32 read_val;
+
+		base = (void __force *) io_mapping_map_atomic_wc(&obj->memory_region->iomap,
+								 i915_gem_object_get_dma_address(obj, n));
+
+		read_val = ioread32(base + dword);
+		io_mapping_unmap_atomic(base);
+		if (read_val != val) {
+			pr_err("n=%lu base[%u]=%u, val=%u\n",
+			       n, dword, read_val, val);
+			err = -EINVAL;
+			break;
+		}
+	}
+
+	i915_gem_object_unpin_pages(obj);
+	return err;
+}
+
+static int igt_gpu_fill(struct i915_gem_context *ctx,
+			struct drm_i915_gem_object *obj,
+			u32 val)
+{
+	struct drm_i915_private *i915 = ctx->i915;
+	struct i915_address_space *vm = ctx->ppgtt ? &ctx->ppgtt->vm : &i915->ggtt.vm;
+	struct i915_vma *vma;
+	u32 dword;
+	int err;
+
+	vma = i915_vma_instance(obj, vm, NULL);
+	if (IS_ERR(vma))
+		return PTR_ERR(vma);
+
+	err = i915_vma_pin(vma, 0, 0, PIN_USER);
+	if (err) {
+		i915_vma_close(vma);
+		return err;
+	}
+
+	for (dword = 0; dword < PAGE_SIZE / sizeof(u32); ++dword) {
+		err = igt_gpu_write(vma, ctx, i915->engine[RCS], dword, val);
+		if (err)
+			break;
+
+		err = igt_cpu_check(obj, dword, val);
+		if (err)
+			break;
+	}
+
+	i915_vma_unpin(vma);
+	i915_vma_close(vma);
+
+	return err;
+}
+
 static int igt_lmem_create(void *arg)
 {
 	struct i915_gem_context *ctx = arg;
@@ -360,6 +555,35 @@ static int igt_lmem_create(void *arg)
 	if (err)
 		goto out_put;
 
+	i915_gem_object_unpin_pages(obj);
+out_put:
+	i915_gem_object_put(obj);
+
+	return err;
+}
+
+static int igt_lmem_write_gpu(void *arg)
+{
+	struct i915_gem_context *ctx = arg;
+	struct drm_i915_private *i915 = ctx->i915;
+	struct drm_i915_gem_object *obj;
+	int err = 0;
+
+	obj = i915_gem_object_create_lmem(i915, PAGE_SIZE, 0);
+	if (IS_ERR(obj))
+		return PTR_ERR(obj);
+
+	err = i915_gem_object_pin_pages(obj);
+	if (err)
+		goto out_put;
+
+	err = igt_gpu_fill(ctx, obj, 0xdeadbeaf);
+	if (err) {
+		pr_err("igt_gpu_fill failed(%d)\n", err);
+		goto out_unpin;
+	}
+
+out_unpin:
 	i915_gem_object_unpin_pages(obj);
 out_put:
 	i915_gem_object_put(obj);
@@ -408,6 +632,7 @@ int intel_memory_region_live_selftests(struct drm_i915_private *i915)
 {
 	static const struct i915_subtest tests[] = {
 		SUBTEST(igt_lmem_create),
+		SUBTEST(igt_lmem_write_gpu),
 	};
 	struct i915_gem_context *ctx;
 	struct drm_file *file;
