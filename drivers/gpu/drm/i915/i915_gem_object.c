@@ -46,3 +46,4 @@ void i915_gem_object_set_cache_coherency(struct drm_i915_gem_object *obj,
 	obj->cache_dirty =
 		!(obj->cache_coherent & I915_BO_CACHE_COHERENT_FOR_WRITE);
 }
+

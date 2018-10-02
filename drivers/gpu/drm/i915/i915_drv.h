@@ -85,6 +85,8 @@
 #include "i915_timeline.h"
 #include "i915_vma.h"
 
+#include "intel_region_lmem.h"
+
 #include "intel_gvt.h"
 
 /* General customization:
@@ -1503,6 +1505,8 @@ struct drm_i915_private {
 
 	void __iomem *regs;
 
+	struct intel_memory_region *regions[ARRAY_SIZE(intel_region_map)];
+
 	struct intel_uncore uncore;
 
 	struct i915_virtual_gpu vgpu;
@@ -2522,6 +2526,7 @@ static inline unsigned int i915_sg_segment_size(void)
 #define HAS_IPC(dev_priv)		 (INTEL_INFO(dev_priv)->display.has_ipc)
 
 #define HAS_REGION(i915, i) (INTEL_INFO(i915)->memory_regions & (i))
+#define HAS_LMEM(i915) HAS_REGION(i915, REGION_LMEM)
 
 /*
  * For now, anything with a GuC requires uCode loading, and then supports

@@ -345,6 +345,28 @@ err_put:
 	return err;
 }
 
+static int igt_lmem_create(void *arg)
+{
+	struct i915_gem_context *ctx = arg;
+	struct drm_i915_private *i915 = ctx->i915;
+	struct drm_i915_gem_object *obj;
+	int err = 0;
+
+	obj = i915_gem_object_create_lmem(i915, PAGE_SIZE, 0);
+	if (IS_ERR(obj))
+		return PTR_ERR(obj);
+
+	err = i915_gem_object_pin_pages(obj);
+	if (err)
+		goto out_put;
+
+	i915_gem_object_unpin_pages(obj);
+out_put:
+	i915_gem_object_put(obj);
+
+	return err;
+}
+
 int intel_memory_region_mock_selftests(void)
 {
 	static const struct i915_subtest tests[] = {
@@ -378,6 +400,48 @@ int intel_memory_region_mock_selftests(void)
 
 out_unref:
 	drm_dev_put(&i915->drm);
+
+	return err;
+}
+
+int intel_memory_region_live_selftests(struct drm_i915_private *i915)
+{
+	static const struct i915_subtest tests[] = {
+		SUBTEST(igt_lmem_create),
+	};
+	struct i915_gem_context *ctx;
+	struct drm_file *file;
+	intel_wakeref_t wakeref;
+	int err;
+
+	if (!HAS_LMEM(i915)) {
+		pr_info("device lacks LMEM support, skipping\n");
+		return 0;
+	}
+
+	if (i915_terminally_wedged(&i915->gpu_error))
+		return 0;
+
+	file = mock_file(i915);
+	if (IS_ERR(file))
+		return PTR_ERR(file);
+
+	mutex_lock(&i915->drm.struct_mutex);
+	wakeref = intel_runtime_pm_get(i915);
+
+	ctx = live_context(i915, file);
+	if (IS_ERR(ctx)) {
+		err = PTR_ERR(ctx);
+		goto out_unlock;
+	}
+
+	err = i915_subtests(tests, ctx);
+
+out_unlock:
+	intel_runtime_pm_put(i915, wakeref);
+	mutex_unlock(&i915->drm.struct_mutex);
+
+	mock_file_free(i915, file);
 
 	return err;
 }
