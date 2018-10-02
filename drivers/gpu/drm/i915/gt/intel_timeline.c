@@ -6,6 +6,7 @@
 
 #include "i915_drv.h"
 
+#include "gem/i915_gem_lmem.h"
 #include "i915_active.h"
 #include "i915_syncmap.h"
 #include "intel_gt.h"
@@ -34,7 +35,12 @@ static int __hwsp_alloc(struct intel_gt *gt, struct intel_timeline_hwsp *hwsp)
 	int type;
 	int ret;
 
-	obj = i915_gem_object_create_internal(i915, PAGE_SIZE);
+	if (HAS_LMEM(i915))
+		obj = i915_gem_object_create_lmem(i915, PAGE_SIZE,
+						  I915_BO_ALLOC_CONTIGUOUS |
+						  I915_BO_ALLOC_VOLATILE);
+	else
+		obj = i915_gem_object_create_internal(i915, PAGE_SIZE);
 	if (IS_ERR(obj))
 		return PTR_ERR(obj);
 
