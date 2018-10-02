@@ -160,6 +160,15 @@ struct drm_i915_gem_object {
 		struct mutex lock; /* protects the pages and their use */
 		atomic_t pages_pin_count;
 
+		/**
+		 * Memory region for this object.
+		 */
+		struct intel_memory_region *region;
+		/**
+		 * List of memory region blocks allocated for this object.
+		 */
+		struct list_head blocks;
+
 		struct sg_table *pages;
 		void *mapping;
 
