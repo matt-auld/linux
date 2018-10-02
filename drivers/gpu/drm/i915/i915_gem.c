@@ -1782,11 +1782,7 @@ compute_partial_view(const struct drm_i915_gem_object *obj,
 }
 
 /**
- * i915_gem_fault - fault a page into the GTT
- * @vmf: fault info
- *
- * The fault handler is set up by drm_gem_mmap() when a object is GTT mapped
- * from userspace.  The fault handler takes care of binding the object to
+ * The GTT fill pages handler takes care of binding the object to
  * the GTT (if needed), allocating and programming a fence register (again,
  * only if needed based on whether the old reg is still valid or the object
  * is tiled) and inserting a new PTE into the faulting process.
@@ -1799,56 +1795,19 @@ compute_partial_view(const struct drm_i915_gem_object *obj,
  * The current feature set supported by i915_gem_fault() and thus GTT mmaps
  * is exposed via I915_PARAM_MMAP_GTT_VERSION (see i915_gem_mmap_gtt_version).
  */
-vm_fault_t i915_gem_fault(struct vm_fault *vmf)
+static int __vmf_fill_pages_gtt(struct drm_i915_gem_object *obj,
+				struct vm_fault *vmf,
+				pgoff_t page_offset)
 {
 #define MIN_CHUNK_PAGES (SZ_1M >> PAGE_SHIFT)
 	struct vm_area_struct *area = vmf->vma;
-	struct drm_i915_gem_object *obj = to_intel_bo(area->vm_private_data);
 	struct drm_device *dev = obj->base.dev;
 	struct drm_i915_private *dev_priv = to_i915(dev);
 	struct i915_ggtt *ggtt = &dev_priv->ggtt;
 	bool write = area->vm_flags & VM_WRITE;
-	intel_wakeref_t wakeref;
 	struct i915_vma *vma;
-	pgoff_t page_offset;
 	int srcu;
 	int ret;
-
-	/* Sanity check that we allow writing into this object */
-	if (i915_gem_object_is_readonly(obj) && write)
-		return VM_FAULT_SIGBUS;
-
-	/* We don't use vmf->pgoff since that has the fake offset */
-	page_offset = (vmf->address - area->vm_start) >> PAGE_SHIFT;
-
-	trace_i915_gem_object_fault(obj, page_offset, true, write);
-
-	/* Try to flush the object off the GPU first without holding the lock.
-	 * Upon acquiring the lock, we will perform our sanity checks and then
-	 * repeat the flush holding the lock in the normal manner to catch cases
-	 * where we are gazumped.
-	 */
-	ret = i915_gem_object_wait(obj,
-				   I915_WAIT_INTERRUPTIBLE,
-				   MAX_SCHEDULE_TIMEOUT);
-	if (ret)
-		goto err;
-
-	ret = i915_gem_object_pin_pages(obj);
-	if (ret)
-		goto err;
-
-	wakeref = intel_runtime_pm_get(dev_priv);
-
-	ret = i915_mutex_lock_interruptible(dev);
-	if (ret)
-		goto err_rpm;
-
-	/* Access to snoopable pages through the GTT is incoherent. */
-	if (obj->cache_level != I915_CACHE_NONE && !HAS_LLC(dev_priv)) {
-		ret = -EFAULT;
-		goto err_unlock;
-	}
 
 	/* Now pin it into the GTT as needed */
 	vma = i915_gem_object_ggtt_pin(obj, NULL, 0, 0,
@@ -1880,7 +1839,7 @@ vm_fault_t i915_gem_fault(struct vm_fault *vmf)
 	}
 	if (IS_ERR(vma)) {
 		ret = PTR_ERR(vma);
-		goto err_unlock;
+		return ret;
 	}
 
 	ret = i915_gem_object_set_to_gtt_domain(obj, write);
@@ -1920,6 +1879,67 @@ err_fence:
 	i915_vma_unpin_fence(vma);
 err_unpin:
 	__i915_vma_unpin(vma);
+
+	return ret;
+}
+
+/**
+ * i915_gem_fault - fault a page into the memory
+ * @vmf: fault info
+ *
+ * The fault handler is set up by drm_gem_mmap() when mmap_offset is called on
+ * an object from userspace. The missing pages are setup by an object's
+ * vmf_fill_pages pages handler, depending on it's backing storage.
+ */
+vm_fault_t i915_gem_fault(struct vm_fault *vmf)
+{
+	struct vm_area_struct *area = vmf->vma;
+	struct drm_i915_gem_object *obj = to_intel_bo(area->vm_private_data);
+	struct drm_device *dev = obj->base.dev;
+	struct drm_i915_private *dev_priv = to_i915(dev);
+	intel_wakeref_t wakeref;
+	bool write = !!(vmf->flags & FAULT_FLAG_WRITE);
+	pgoff_t page_offset;
+	int ret;
+
+	/* Sanity check that we allow writing into this object */
+	if (i915_gem_object_is_readonly(obj) && write)
+		return VM_FAULT_SIGBUS;
+
+	/* We don't use vmf->pgoff since that has the fake offset */
+	page_offset = (vmf->address - area->vm_start) >> PAGE_SHIFT;
+
+	trace_i915_gem_object_fault(obj, page_offset, true, write);
+
+	/* Try to flush the object off the GPU first without holding the lock.
+	 * Upon acquiring the lock, we will perform our sanity checks and then
+	 * repeat the flush holding the lock in the normal manner to catch cases
+	 * where we are gazumped.
+	 */
+	ret = i915_gem_object_wait(obj,
+				   I915_WAIT_INTERRUPTIBLE,
+				   MAX_SCHEDULE_TIMEOUT);
+	if (ret)
+		goto err;
+
+	ret = i915_gem_object_pin_pages(obj);
+	if (ret)
+		goto err;
+
+	wakeref = intel_runtime_pm_get(dev_priv);
+
+	ret = i915_mutex_lock_interruptible(dev);
+	if (ret)
+		goto err_rpm;
+
+	/* Access to snoopable pages through the GTT is incoherent. */
+	if (obj->cache_level != I915_CACHE_NONE && !HAS_LLC(dev_priv)) {
+		ret = -EFAULT;
+		goto err_unlock;
+	}
+
+	ret = __vmf_fill_pages_gtt(obj, vmf, page_offset);
+
 err_unlock:
 	mutex_unlock(&dev->struct_mutex);
 err_rpm:
