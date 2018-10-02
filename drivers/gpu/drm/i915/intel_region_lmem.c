@@ -47,6 +47,17 @@ static const struct intel_memory_region_ops region_lmem_ops = {
 	.create_object = region_lmem_object_create,
 };
 
+unsigned long i915_gem_object_lmem_io_pfn(struct drm_i915_gem_object *obj,
+					  unsigned long n)
+{
+	struct intel_memory_region *mem = obj->memory_region;
+	resource_size_t offset;
+
+	offset = i915_gem_object_get_dma_address(obj, n);
+
+	return (mem->io_start + offset) >> PAGE_SHIFT;
+}
+
 bool i915_gem_object_is_lmem(struct drm_i915_gem_object *obj)
 {
 	struct intel_memory_region *region = obj->memory_region;
