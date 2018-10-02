@@ -72,6 +72,7 @@
 #include "intel_wopcm.h"
 #include "intel_workarounds.h"
 #include "intel_uc.h"
+#include "intel_memory_region.h"
 
 #include "i915_gem.h"
 #include "i915_gem_context.h"

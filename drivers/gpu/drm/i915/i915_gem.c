@@ -5706,4 +5706,5 @@ err_unlock:
 #include "selftests/i915_gem_object.c"
 #include "selftests/i915_gem_coherency.c"
 #include "selftests/i915_gem.c"
+#include "selftests/intel_memory_region.c"
 #endif

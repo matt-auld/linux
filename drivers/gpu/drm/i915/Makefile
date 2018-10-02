@@ -88,6 +88,7 @@ i915-y += \
 	  intel_engine_cs.o \
 	  intel_hangcheck.o \
 	  intel_lrc.o \
+	  intel_memory_region.o \
 	  intel_mocs.o \
 	  intel_ringbuffer.o \
 	  intel_uncore.o \

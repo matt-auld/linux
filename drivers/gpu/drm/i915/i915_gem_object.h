@@ -87,6 +87,15 @@ struct drm_i915_gem_object {
 
 	const struct drm_i915_gem_object_ops *ops;
 
+	/**
+	 * Memory region for this object.
+	 */
+	struct intel_memory_region *memory_region;
+	/**
+	 * List of memory region blocks allocated for this object.
+	 */
+	struct list_head blocks;
+
 	struct {
 		/**
 		 * @vma.lock: protect the list/tree of vmas

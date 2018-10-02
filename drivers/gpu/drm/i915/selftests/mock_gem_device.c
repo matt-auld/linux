@@ -32,6 +32,7 @@
 #include "mock_gem_object.h"
 #include "mock_gtt.h"
 #include "mock_uncore.h"
+#include "mock_region.h"
 
 void mock_device_flush(struct drm_i915_private *i915)
 {

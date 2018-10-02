@@ -458,6 +458,83 @@ out_device:
 	return err;
 }
 
+static int igt_mock_memory_region_huge_pages(void *arg)
+{
+	struct i915_hw_ppgtt *ppgtt = arg;
+	struct drm_i915_private *i915 = ppgtt->vm.i915;
+	unsigned long supported = INTEL_INFO(i915)->page_sizes;
+	struct intel_memory_region *mem;
+	struct drm_i915_gem_object *obj;
+	struct i915_vma *vma;
+	int bit;
+	int err = 0;
+
+	mem = mock_region_create(i915, 0, SZ_2G,
+				 I915_GTT_PAGE_SIZE_4K, 0);
+	if (IS_ERR(mem)) {
+		pr_err("failed to create memory region\n");
+		return PTR_ERR(mem);
+	}
+
+	for_each_set_bit(bit, &supported, ilog2(I915_GTT_MAX_PAGE_SIZE) + 1) {
+		unsigned int page_size = BIT(bit);
+		resource_size_t phys;
+
+		obj = i915_gem_object_create_region(mem, page_size, 0);
+		if (IS_ERR(obj)) {
+			err = PTR_ERR(obj);
+			goto out_destroy_device;
+		}
+
+		pr_info("creating region object, size=%x\n", page_size);
+
+		vma = i915_vma_instance(obj, &ppgtt->vm, NULL);
+		if (IS_ERR(vma)) {
+			err = PTR_ERR(vma);
+			goto out_put;
+		}
+
+		err = i915_vma_pin(vma, 0, 0, PIN_USER);
+		if (err)
+			goto out_close;
+
+		phys = i915_gem_object_get_dma_address(obj, 0);
+		if (!IS_ALIGNED(phys, page_size)) {
+			pr_err("memory region misaligned(%pa)\n", &phys);
+			err = -EINVAL;
+			goto out_close;
+		}
+
+		if (vma->page_sizes.gtt != page_size) {
+			pr_err("page_sizes.gtt=%u, expected=%u\n",
+			       vma->page_sizes.gtt, page_size);
+			err = -EINVAL;
+			goto out_unpin;
+		}
+
+		i915_vma_unpin(vma);
+		i915_vma_close(vma);
+
+		i915_gem_object_put(obj);
+	}
+
+	goto out_destroy_device;
+
+out_unpin:
+	i915_vma_unpin(vma);
+out_close:
+	i915_vma_close(vma);
+out_put:
+	i915_gem_object_put(obj);
+out_destroy_device:
+	mutex_unlock(&i915->drm.struct_mutex);
+	i915_gem_drain_freed_objects(i915);
+	mutex_lock(&i915->drm.struct_mutex);
+	intel_memory_region_destroy(mem);
+
+	return err;
+}
+
 static int igt_mock_ppgtt_misaligned_dma(void *arg)
 {
 	struct i915_hw_ppgtt *ppgtt = arg;
@@ -1697,6 +1774,7 @@ int i915_gem_huge_page_mock_selftests(void)
 {
 	static const struct i915_subtest tests[] = {
 		SUBTEST(igt_mock_exhaust_device_supported_pages),
+		SUBTEST(igt_mock_memory_region_huge_pages),
 		SUBTEST(igt_mock_ppgtt_misaligned_dma),
 		SUBTEST(igt_mock_ppgtt_huge_fill),
 		SUBTEST(igt_mock_ppgtt_64K),
