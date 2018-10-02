@@ -641,7 +641,8 @@ i915_gem_create(struct drm_file *file,
 		u32 *handle_p)
 {
 	struct drm_i915_gem_object *obj;
-	int ret;
+	intel_wakeref_t wakeref;
+	int ret = 0;
 	u32 handle;
 
 	size = roundup(size, PAGE_SIZE);
@@ -649,9 +650,49 @@ i915_gem_create(struct drm_file *file,
 		return -EINVAL;
 
 	/* Allocate the new object */
-	obj = i915_gem_object_create(dev_priv, size);
+	if (HAS_LMEM(dev_priv))
+		obj = i915_gem_object_create_lmem(dev_priv, size, 0);
+	else
+		obj = i915_gem_object_create(dev_priv, size);
 	if (IS_ERR(obj))
 		return PTR_ERR(obj);
+
+	if (i915_gem_object_is_lmem(obj)) {
+		struct i915_gem_context *ctx;
+
+		/* XXX: we should prob use the blitter context for this? */
+		ctx = i915_gem_context_lookup(file->driver_priv,
+					      DEFAULT_CONTEXT_HANDLE);
+		if (!ctx) {
+			i915_gem_object_put(obj);
+			return -ENOENT;
+		}
+
+		/*
+		 * XXX: We really want to move this to get_pages(), but we
+		 * require grabbing the BKL for the blitting operation which is
+		 * annoying. In the pipeline is support for async get_pages()
+		 * which should fit nicely for this. Also note that the actual
+		 * clear should be done async(we currently do an object_wait
+		 * in clear_blt which is pure garbage), we just need to take
+		 * care if userspace opts of implicit sync for the execbuf, to
+		 * avoid any potential info leak.
+		 */
+
+		mutex_lock(&dev_priv->drm.struct_mutex);
+
+		with_intel_runtime_pm(dev_priv, wakeref)
+			ret = i915_gem_object_clear_blt(ctx, obj);
+
+		i915_gem_context_put(ctx);
+		if (ret) {
+			__i915_gem_object_release_unless_active(obj);
+			mutex_unlock(&dev_priv->drm.struct_mutex);
+			return ret;
+		}
+
+		mutex_unlock(&dev_priv->drm.struct_mutex);
+	}
 
 	ret = drm_gem_handle_create(file, &obj->base, &handle);
 	/* drop reference from allocate - handle holds it now */
