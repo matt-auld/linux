@@ -435,6 +435,8 @@ static int i915_gem_object_info(struct seq_file *m, void *data)
 	struct i915_ggtt *ggtt = &dev_priv->ggtt;
 	u32 count, mapped_count, purgeable_count, dpy_count, huge_count;
 	u64 size, mapped_size, purgeable_size, dpy_size, huge_size;
+	u32 lmem_count, lmem_dpy_count;
+	u64 lmem_size, lmem_dpy_size;
 	struct drm_i915_gem_object *obj;
 	unsigned int page_sizes = 0;
 	char buf[80];
@@ -448,6 +450,7 @@ static int i915_gem_object_info(struct seq_file *m, void *data)
 	mapped_size = mapped_count = 0;
 	purgeable_size = purgeable_count = 0;
 	huge_size = huge_count = 0;
+	lmem_size = lmem_count = lmem_dpy_size = lmem_dpy_count = 0;
 
 	spin_lock(&dev_priv->mm.obj_lock);
 	list_for_each_entry(obj, &dev_priv->mm.unbound_list, mm.link) {
@@ -468,6 +471,15 @@ static int i915_gem_object_info(struct seq_file *m, void *data)
 			huge_count++;
 			huge_size += obj->base.size;
 			page_sizes |= obj->mm.page_sizes.sg;
+		}
+
+		if (i915_gem_object_is_lmem(obj)) {
+			if (obj->pin_global) {
+				lmem_dpy_count++;
+				lmem_dpy_size += obj->base.size;
+			}
+			lmem_count++;
+			lmem_size += obj->base.size;
 		}
 	}
 	seq_printf(m, "%u unbound objects, %llu bytes\n", count, size);
@@ -497,6 +509,15 @@ static int i915_gem_object_info(struct seq_file *m, void *data)
 			huge_size += obj->base.size;
 			page_sizes |= obj->mm.page_sizes.sg;
 		}
+
+		if (i915_gem_object_is_lmem(obj)) {
+			if (obj->pin_global) {
+				lmem_dpy_count++;
+				lmem_dpy_size += obj->base.size;
+			}
+			lmem_count++;
+			lmem_size += obj->base.size;
+		}
 	}
 	spin_unlock(&dev_priv->mm.obj_lock);
 
@@ -512,6 +533,12 @@ static int i915_gem_object_info(struct seq_file *m, void *data)
 		   huge_size);
 	seq_printf(m, "%u display objects (globally pinned), %llu bytes\n",
 		   dpy_count, dpy_size);
+
+	if (HAS_LMEM(dev_priv)) {
+		seq_printf(m, "%u LMEM objects, %llu bytes\n", lmem_count, lmem_size);
+		seq_printf(m, "%u LMEM display objects (globally pinned), %llu bytes\n",
+			   lmem_dpy_count, lmem_dpy_size);
+	}
 
 	seq_printf(m, "%llu [%pa] gtt total\n",
 		   ggtt->vm.total, &ggtt->mappable_end);
