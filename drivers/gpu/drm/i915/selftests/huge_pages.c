@@ -30,6 +30,7 @@
 #include "i915_random.h"
 
 static const unsigned int page_sizes[] = {
+	I915_GTT_PAGE_SIZE_1G,
 	I915_GTT_PAGE_SIZE_2M,
 	I915_GTT_PAGE_SIZE_64K,
 	I915_GTT_PAGE_SIZE_4K,
@@ -1220,7 +1221,7 @@ static int igt_ppgtt_exhaust_huge(void *arg)
 	 */
 
 	n = 0;
-	for_each_set_bit(i, &supported, ilog2(I915_GTT_MAX_PAGE_SIZE) + 1)
+	for_each_set_bit(i, &supported, ilog2(I915_GTT_PAGE_SIZE_2M) + 1)
 		pages[n++] = BIT(i);
 
 	for (size_mask = 2; size_mask < BIT(n); size_mask++) {
