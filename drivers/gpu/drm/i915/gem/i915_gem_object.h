@@ -122,6 +122,12 @@ i915_gem_object_lock_fence(struct drm_i915_gem_object *obj);
 void i915_gem_object_unlock_fence(struct drm_i915_gem_object *obj,
 				  struct dma_fence *fence);
 
+static inline bool
+i915_gem_object_is_volatile(const struct drm_i915_gem_object *obj)
+{
+	return obj->flags & I915_BO_ALLOC_VOLATILE;
+}
+
 static inline void
 i915_gem_object_set_readonly(struct drm_i915_gem_object *obj)
 {

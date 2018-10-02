@@ -109,7 +109,12 @@ void i915_gem_object_init_memory_region(struct drm_i915_gem_object *obj,
 	obj->flags = flags;
 
 	mutex_lock(&mem->obj_lock);
-	list_add(&obj->mm.region_link, &mem->objects);
+
+	if (obj->flags & I915_BO_ALLOC_VOLATILE)
+		list_add(&obj->mm.region_link, &mem->purgeable);
+	else
+		list_add(&obj->mm.region_link, &mem->objects);
+
 	mutex_unlock(&mem->obj_lock);
 }
 
