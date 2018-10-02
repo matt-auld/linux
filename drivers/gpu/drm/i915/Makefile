@@ -61,6 +61,7 @@ i915-y += \
 	  i915_active.o \
 	  i915_cmd_parser.o \
 	  i915_gem_batch_pool.o \
+	  i915_gem_buddy.o \
 	  i915_gem_clflush.o \
 	  i915_gem_context.o \
 	  i915_gem_dmabuf.o \
