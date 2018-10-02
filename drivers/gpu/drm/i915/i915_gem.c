@@ -44,6 +44,7 @@
 #include "gem/i915_gem_clflush.h"
 #include "gem/i915_gem_context.h"
 #include "gem/i915_gem_ioctls.h"
+#include "gem/i915_gem_object_blt.h"
 #include "gem/i915_gem_pm.h"
 #include "gt/intel_gt.h"
 #include "gt/intel_gt_pm.h"
@@ -164,8 +165,44 @@ i915_gem_create(struct drm_file *file,
 
 	/* Allocate the new object */
 	obj = i915_gem_object_create_shmem(dev_priv, size);
+	if (HAS_LMEM(dev_priv))
+		obj = i915_gem_object_create_lmem(dev_priv, size, 0);
+	else
+		obj = i915_gem_object_create_shmem(dev_priv, size);
 	if (IS_ERR(obj))
 		return PTR_ERR(obj);
+
+	if (i915_gem_object_is_lmem(obj)) {
+		struct intel_context *ce =
+			dev_priv->engine[BCS0]->kernel_context;
+
+		/*
+		 * XXX: We really want to move this to get_pages(), but we
+		 * require grabbing the BKL for the blitting operation which is
+		 * annoying. In the pipeline is support for async get_pages()
+		 * which should fit nicely for this. Also note that the actual
+		 * clear should be done async(we currently do an object_wait
+		 * which is pure garbage), we just need to take care if
+		 * userspace opts of implicit sync for the execbuf, to avoid any
+		 * potential info leak.
+		 */
+
+		mutex_lock(&dev_priv->drm.struct_mutex);
+		ret = i915_gem_object_fill_blt(obj, ce, 0);
+		mutex_unlock(&dev_priv->drm.struct_mutex);
+		if (ret) {
+			i915_gem_object_put(obj);
+			return ret;
+		}
+
+		i915_gem_object_lock(obj);
+		ret = i915_gem_object_set_to_cpu_domain(obj, false);
+		i915_gem_object_unlock(obj);
+		if (ret) {
+			i915_gem_object_put(obj);
+			return ret;
+		}
+	}
 
 	ret = drm_gem_handle_create(file, &obj->base, &handle);
 	/* drop reference from allocate - handle holds it now */
