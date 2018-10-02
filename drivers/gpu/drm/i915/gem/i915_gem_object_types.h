@@ -135,7 +135,8 @@ struct drm_i915_gem_object {
 
 	unsigned long flags;
 #define I915_BO_ALLOC_CONTIGUOUS (1<<0)
-#define I915_BO_ALLOC_FLAGS (I915_BO_ALLOC_CONTIGUOUS)
+#define I915_BO_ALLOC_VOLATILE   (1<<1)
+#define I915_BO_ALLOC_FLAGS (I915_BO_ALLOC_CONTIGUOUS | I915_BO_ALLOC_VOLATILE)
 
 	/*
 	 * Is the object to be mapped as read-only to the GPU
