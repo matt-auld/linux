@@ -1092,7 +1092,7 @@ err_batch:
 	return err;
 }
 
-static int cpu_check(struct drm_i915_gem_object *obj, u32 dword, u32 val)
+static int __cpu_check_shmem(struct drm_i915_gem_object *obj, u32 dword, u32 val)
 {
 	unsigned int needs_flush;
 	unsigned long n;
@@ -1122,6 +1122,52 @@ static int cpu_check(struct drm_i915_gem_object *obj, u32 dword, u32 val)
 	i915_gem_obj_finish_shmem_access(obj);
 
 	return err;
+}
+
+static int __cpu_check_lmem(struct drm_i915_gem_object *obj, u32 dword, u32 val)
+{
+	unsigned long n;
+	int err;
+
+	err = i915_gem_object_set_to_wc_domain(obj, false);
+	if (err)
+		return err;
+
+	err = i915_gem_object_pin_pages(obj);
+	if (err)
+		return err;
+
+	for (n = 0; n < obj->base.size >> PAGE_SHIFT; ++n) {
+		u32 __iomem *base;
+		u32 read_val;
+
+		base = (void __force *)io_mapping_map_atomic_wc(&obj->memory_region->iomap,
+								i915_gem_object_get_dma_address(obj, n));
+
+		read_val = ioread32(base + dword);
+		io_mapping_unmap_atomic(base);
+		if (read_val != val) {
+			pr_err("n=%lu base[%u]=%u, val=%u\n",
+			       n, dword, read_val, val);
+			err = -EINVAL;
+			break;
+		}
+	}
+
+	i915_gem_object_unpin_pages(obj);
+	return err;
+}
+
+static int cpu_check(struct drm_i915_gem_object *obj, u32 dword, u32 val)
+{
+	struct drm_i915_private *i915 = to_i915(obj->base.dev);
+
+	if (i915_gem_object_has_struct_page(obj))
+		return __cpu_check_shmem(obj, dword, val);
+	else if (HAS_LMEM(i915) && obj->memory_region)
+		return __cpu_check_lmem(obj, dword, val);
+
+	return -ENODEV;
 }
 
 static int __igt_write_huge(struct i915_gem_context *ctx,
@@ -1507,6 +1553,81 @@ out_put:
 	return err;
 }
 
+static int igt_ppgtt_lmem_huge(void *arg)
+{
+	struct i915_gem_context *ctx = arg;
+	struct drm_i915_private *i915 = ctx->i915;
+	struct drm_i915_gem_object *obj;
+	static const unsigned int sizes[] = {
+		SZ_64K,
+		SZ_512K,
+		SZ_1M,
+		SZ_2M,
+		SZ_1G, /* Try our luck! */
+	};
+	int i;
+	int err;
+
+	if (!HAS_LMEM(i915)) {
+		pr_info("device lacks LMEM support, skipping\n");
+		return 0;
+	}
+
+	/*
+	 * Sanity check that the HW uses huge pages correctly through LMEM
+	 * -- ensure that our writes land in the right place.
+	 */
+
+	for (i = 0; i < ARRAY_SIZE(sizes); ++i) {
+		unsigned int size = sizes[i];
+
+		obj = i915_gem_object_create_lmem(i915, size, 0);
+		if (IS_ERR(obj)) {
+			err = PTR_ERR(obj);
+			if (err == -E2BIG) {
+				pr_info("object too big for region!\n");
+				return 0;
+			}
+
+			return err;
+		}
+
+		err = i915_gem_object_pin_pages(obj);
+		if (err)
+			goto out_put;
+
+		if (obj->mm.page_sizes.phys == I915_GTT_PAGE_SIZE_1G) {
+			pr_info("long live 1G pages!\n");
+		} else if (obj->mm.page_sizes.phys < I915_GTT_PAGE_SIZE_64K) {
+			pr_info("LMEM unable to allocate huge-page(s) with size=%u\n",
+				size);
+			goto out_unpin;
+		}
+
+		err = igt_write_huge(ctx, obj);
+		if (err) {
+			pr_err("LMEM write-huge failed with size=%u\n", size);
+			goto out_unpin;
+		}
+
+		i915_gem_object_unpin_pages(obj);
+		__i915_gem_object_put_pages(obj, I915_MM_NORMAL);
+		i915_gem_object_put(obj);
+	}
+
+	return 0;
+
+out_unpin:
+	i915_gem_object_unpin_pages(obj);
+out_put:
+	i915_gem_object_put(obj);
+
+	if (err == -ENOMEM)
+		err = 0;
+
+	return err;
+}
+
 static int igt_ppgtt_pin_update(void *arg)
 {
 	struct i915_gem_context *ctx = arg;
@@ -1832,6 +1953,7 @@ int i915_gem_huge_page_live_selftests(struct drm_i915_private *dev_priv)
 		SUBTEST(igt_ppgtt_exhaust_huge),
 		SUBTEST(igt_ppgtt_gemfs_huge),
 		SUBTEST(igt_ppgtt_internal_huge),
+		SUBTEST(igt_ppgtt_lmem_huge),
 	};
 	struct drm_file *file;
 	struct i915_gem_context *ctx;
