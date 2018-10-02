@@ -2812,6 +2812,9 @@ void i915_gem_object_init(struct drm_i915_gem_object *obj,
 			 const struct drm_i915_gem_object_ops *ops);
 int i915_gem_object_clear_blt(struct i915_gem_context *ctx,
 			      struct drm_i915_gem_object *obj);
+int i915_gem_object_copy_blt(struct i915_gem_context *ctx,
+			     struct drm_i915_gem_object *src,
+			     struct drm_i915_gem_object *dst);
 struct drm_i915_gem_object *
 i915_gem_object_create(struct drm_i915_private *dev_priv, u64 size);
 struct drm_i915_gem_object *

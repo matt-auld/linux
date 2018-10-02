@@ -4289,6 +4289,193 @@ static bool discard_backing_storage(struct drm_i915_gem_object *obj)
 }
 
 static struct i915_vma *
+__i915_gem_copy_blt(struct i915_vma *src, struct i915_vma *dst)
+{
+	struct drm_i915_private *i915 = to_i915(src->obj->base.dev);
+	const int gen = INTEL_GEN(i915);
+	struct drm_i915_gem_object *obj;
+	struct i915_vma *batch;
+	u32 *cmd;
+	int err;
+
+	GEM_BUG_ON(src->vm != dst->vm);
+	GEM_BUG_ON(src->obj->base.size != dst->obj->base.size);
+
+	obj = i915_gem_object_create_internal(i915, PAGE_SIZE);
+	if (IS_ERR(obj))
+		return ERR_CAST(obj);
+
+	cmd = i915_gem_object_pin_map(obj, I915_MAP_WB);
+	if (IS_ERR(cmd)) {
+		err = PTR_ERR(cmd);
+		goto err;
+	}
+
+	if (gen >= 9) {
+		*cmd++ = GEN9_XY_FAST_COPY_BLT_CMD;
+		*cmd++ = BLT_DEPTH_32 | PAGE_SIZE;
+		*cmd++ = 0;
+		*cmd++ = src->obj->base.size >> PAGE_SHIFT << 16 | PAGE_SIZE / 4;
+		*cmd++ = lower_32_bits(dst->node.start);
+		*cmd++ = upper_32_bits(dst->node.start);
+		*cmd++ = 0;
+		*cmd++ = PAGE_SIZE;
+		*cmd++ = lower_32_bits(src->node.start);
+		*cmd++ = upper_32_bits(src->node.start);
+	} else if (gen >= 8) {
+		*cmd++ = GEN8_XY_SRC_COPY_BLT_CMD | BLT_WRITE_RGBA;
+		*cmd++ = BLT_DEPTH_32 | BLT_ROP_SRC_COPY | PAGE_SIZE;
+		*cmd++ = 0;
+		*cmd++ = src->obj->base.size >> PAGE_SHIFT << 16 | PAGE_SIZE / 4;
+		*cmd++ = lower_32_bits(dst->node.start);
+		*cmd++ = upper_32_bits(dst->node.start);
+		*cmd++ = 0;
+		*cmd++ = PAGE_SIZE;
+		*cmd++ = lower_32_bits(src->node.start);
+		*cmd++ = upper_32_bits(src->node.start);
+	} else {
+		*cmd++ = XY_SRC_COPY_BLT_CMD | BLT_WRITE_RGBA;
+		*cmd++ = BLT_DEPTH_32 | BLT_ROP_SRC_COPY | PAGE_SIZE;
+		*cmd++ = 0;
+		*cmd++ = src->obj->base.size >> PAGE_SHIFT << 16 | PAGE_SIZE / 4;
+		*cmd++ = dst->node.start;
+		*cmd++ = 0;
+		*cmd++ = PAGE_SIZE;
+		*cmd++ = src->node.start;
+	}
+
+	*cmd = MI_BATCH_BUFFER_END;
+
+	i915_gem_object_unpin_map(obj);
+
+	err = i915_gem_object_set_to_gtt_domain(obj, false);
+	if (err)
+		goto err;
+
+	batch = i915_vma_instance(obj, src->vm, NULL);
+	if (IS_ERR(batch)) {
+		err = PTR_ERR(batch);
+		goto err;
+	}
+
+	err = i915_vma_pin(batch, 0, 0, PIN_USER);
+	if (err)
+		goto err;
+
+	return batch;
+
+err:
+	i915_gem_object_put(obj);
+	return ERR_PTR(err);
+}
+
+static int i915_gem_copy_blt(struct i915_gem_context *ctx,
+			     struct i915_vma *src,
+			     struct i915_vma *dst)
+{
+	struct drm_i915_private *i915 = to_i915(src->obj->base.dev);
+	struct intel_engine_cs *engine = i915->engine[BCS];
+	struct i915_request *rq;
+	struct i915_vma *batch;
+	int flags = 0;
+	int err;
+
+	err = i915_gem_object_set_to_gtt_domain(src->obj, false);
+	if (err)
+		return err;
+
+	err = i915_gem_object_set_to_gtt_domain(dst->obj, true);
+	if (err)
+		return err;
+
+	rq = i915_request_alloc(engine, ctx);
+	if (IS_ERR(rq))
+		return PTR_ERR(rq);
+
+	batch = __i915_gem_copy_blt(src, dst);
+	if (IS_ERR(batch)) {
+		err = PTR_ERR(batch);
+		goto err_request;
+	}
+
+	err = i915_vma_move_to_active(batch, rq, 0);
+	i915_vma_unpin(batch);
+	i915_vma_close(batch);
+	if (err) {
+		i915_gem_object_put(batch->obj);
+		goto err_request;
+	}
+
+	i915_gem_object_set_active_reference(batch->obj);
+
+	err = engine->emit_bb_start(rq,
+				    batch->node.start, batch->node.size,
+				    flags);
+	if (err)
+		goto err_request;
+
+	err = i915_vma_move_to_active(src, rq, 0);
+	if (err) {
+		i915_request_skip(rq, err);
+		goto err_request;
+	}
+
+	err = i915_vma_move_to_active(dst, rq, EXEC_OBJECT_WRITE);
+	if (err)
+		i915_request_skip(rq, err);
+
+err_request:
+	i915_request_add(rq);
+	return err;
+}
+
+int i915_gem_object_copy_blt(struct i915_gem_context *ctx,
+			     struct drm_i915_gem_object *src,
+			     struct drm_i915_gem_object *dst)
+{
+	struct drm_i915_private *i915 = to_i915(src->base.dev);
+	struct i915_address_space *vm = ctx->ppgtt ? &ctx->ppgtt->vm : &i915->ggtt.vm;
+	struct i915_vma *src_vma;
+	struct i915_vma *dst_vma;
+	int err;
+
+	lockdep_assert_held(&i915->drm.struct_mutex);
+
+	src_vma = i915_vma_instance(src, vm, NULL);
+	if (IS_ERR(src_vma))
+		return PTR_ERR(src_vma);
+
+	err = i915_vma_pin(src_vma, 0, 0, PIN_USER);
+	if (err)
+		return err;
+
+	dst_vma = i915_vma_instance(dst, vm, NULL);
+	if (IS_ERR(dst_vma)) {
+		err = PTR_ERR(dst_vma);
+		goto out_unpin_src;
+	}
+
+	err = i915_vma_pin(dst_vma, 0, 0, PIN_USER);
+	if (err)
+		goto out_unpin_src;
+
+	err = i915_gem_copy_blt(ctx, src_vma, dst_vma);
+	i915_vma_unpin(src_vma);
+	i915_vma_unpin(dst_vma);
+	if (err)
+		return err;
+
+	return i915_gem_object_wait(dst,
+				    I915_WAIT_LOCKED |
+				    I915_WAIT_ALL,
+				    MAX_SCHEDULE_TIMEOUT);
+
+out_unpin_src:
+	i915_vma_unpin(src_vma);
+	return err;
+}
+
+static struct i915_vma *
 __i915_gem_fill_blt(struct i915_vma *vma, u32 value)
 {
 	struct drm_i915_private *i915 = to_i915(vma->obj->base.dev);
