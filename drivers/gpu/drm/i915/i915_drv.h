@@ -2169,6 +2169,8 @@ IS_SUBPLATFORM(const struct drm_i915_private *i915,
 #define OVERLAY_NEEDS_PHYSICAL(dev_priv) \
 		(INTEL_INFO(dev_priv)->display.overlay_needs_physical)
 
+#define HAS_MAPPABLE_APERTURE(dev_priv) (dev_priv->ggtt.mappable_end > 0)
+
 /* Early gen2 have a totally busted CS tlb and require pinned batches. */
 #define HAS_BROKEN_CS_TLB(dev_priv)	(IS_I830(dev_priv) || IS_I845G(dev_priv))
 
