@@ -211,7 +211,7 @@ struct compress {
 	void *tmp;
 };
 
-static bool compress_init(struct compress *c)
+static bool compress_init(struct compress *c, bool wc)
 {
 	struct z_stream_s *zstream = memset(&c->zstream, 0, sizeof(c->zstream));
 
@@ -227,7 +227,7 @@ static bool compress_init(struct compress *c)
 	}
 
 	c->tmp = NULL;
-	if (i915_has_memcpy_from_wc())
+	if (wc && i915_has_memcpy_from_wc())
 		c->tmp = (void *)__get_free_page(GFP_ATOMIC | __GFP_NOWARN);
 
 	return true;
@@ -328,10 +328,12 @@ static void err_compression_marker(struct drm_i915_error_state_buf *m)
 #else
 
 struct compress {
+	bool wc;
 };
 
-static bool compress_init(struct compress *c)
+static bool compress_init(struct compress *c, bool wc)
 {
+	c->wc = wc;
 	return true;
 }
 
@@ -347,7 +349,7 @@ static int compress_page(struct compress *c,
 		return -ENOMEM;
 
 	ptr = (void *)page;
-	if (!i915_memcpy_from_wc(ptr, src, PAGE_SIZE))
+	if (!(c->wc && i915_memcpy_from_wc(ptr, src, PAGE_SIZE)))
 		memcpy(ptr, src, PAGE_SIZE);
 	dst->pages[dst->page_count++] = ptr;
 
@@ -1013,7 +1015,6 @@ i915_error_object_create(struct drm_i915_private *i915,
 	struct compress compress;
 	unsigned long num_pages;
 	struct sgt_iter iter;
-	dma_addr_t dma;
 	int ret;
 
 	if (!vma || !vma->pages)
@@ -1032,22 +1033,52 @@ i915_error_object_create(struct drm_i915_private *i915,
 	dst->page_count = 0;
 	dst->unused = 0;
 
-	if (!compress_init(&compress)) {
+	if (!compress_init(&compress, drm_mm_node_allocated(&ggtt->error_capture))) {
 		kfree(dst);
 		return NULL;
 	}
 
 	ret = -EINVAL;
-	for_each_sgt_dma(dma, iter, vma->pages) {
+	if (drm_mm_node_allocated(&ggtt->error_capture)) {
 		void __iomem *s;
+		dma_addr_t dma;
 
-		ggtt->vm.insert_page(&ggtt->vm, dma, slot, I915_CACHE_NONE, 0);
+		for_each_sgt_dma(dma, iter, vma->pages) {
+			ggtt->vm.insert_page(&ggtt->vm, dma, slot,
+					     I915_CACHE_NONE, 0);
 
-		s = io_mapping_map_atomic_wc(&ggtt->iomap, slot);
-		ret = compress_page(&compress, (void  __force *)s, dst);
-		io_mapping_unmap_atomic(s);
-		if (ret)
-			break;
+			s = io_mapping_map_atomic_wc(&ggtt->iomap, slot);
+			ret = compress_page(&compress, (void  __force *)s, dst);
+			io_mapping_unmap_atomic(s);
+
+			if (ret)
+				break;
+		}
+	} else if (i915_gem_object_is_lmem(vma->obj)) {
+		struct intel_memory_region *mem = vma->obj->memory_region;
+		void __iomem *s;
+		dma_addr_t dma;
+
+		for_each_sgt_dma(dma, iter, vma->pages) {
+			s = io_mapping_map_atomic_wc(&mem->iomap, dma);
+			ret = compress_page(&compress, (void __force *)s, dst);
+			io_mapping_unmap_atomic(s);
+
+			if (ret)
+				break;
+		}
+	} else {
+		void *s;
+		struct page *page;
+
+		for_each_sgt_page(page, iter, vma->pages) {
+			s = kmap_atomic(page);
+			ret = compress_page(&compress, s, dst);
+			kunmap_atomic(s);
+
+			if (ret)
+				break;
+		}
 	}
 
 	if (ret || compress_flush(&compress, dst)) {
@@ -1784,9 +1815,12 @@ static unsigned long capture_find_epoch(const struct i915_gpu_state *error)
 static void capture_finish(struct i915_gpu_state *error)
 {
 	struct i915_ggtt *ggtt = &error->i915->ggtt;
-	const u64 slot = ggtt->error_capture.start;
 
-	ggtt->vm.clear_range(&ggtt->vm, slot, PAGE_SIZE);
+	if (drm_mm_node_allocated(&ggtt->error_capture)) {
+		const u64 slot = ggtt->error_capture.start;
+
+		ggtt->vm.clear_range(&ggtt->vm, slot, PAGE_SIZE);
+	}
 }
 
 static int capture(void *data)

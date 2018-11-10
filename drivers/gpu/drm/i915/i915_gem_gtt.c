@@ -2763,13 +2763,15 @@ int i915_gem_init_ggtt(struct drm_i915_private *dev_priv)
 	if (ret)
 		return ret;
 
-	/* Reserve a mappable slot for our lockless error capture */
-	ret = drm_mm_insert_node_in_range(&ggtt->vm.mm, &ggtt->error_capture,
-					  PAGE_SIZE, 0, I915_COLOR_UNEVICTABLE,
-					  0, ggtt->mappable_end,
-					  DRM_MM_INSERT_LOW);
-	if (ret)
-		return ret;
+	if (HAS_MAPPABLE_APERTURE(dev_priv)) {
+		/* Reserve a mappable slot for our lockless error capture */
+		ret = drm_mm_insert_node_in_range(&ggtt->vm.mm, &ggtt->error_capture,
+						  PAGE_SIZE, 0, I915_COLOR_UNEVICTABLE,
+						  0, ggtt->mappable_end,
+						  DRM_MM_INSERT_LOW);
+		if (ret)
+			return ret;
+	}
 
 	/* Clear any non-preallocated blocks */
 	drm_mm_for_each_hole(entry, &ggtt->vm.mm, hole_start, hole_end) {
@@ -2791,7 +2793,8 @@ int i915_gem_init_ggtt(struct drm_i915_private *dev_priv)
 	return 0;
 
 err:
-	drm_mm_remove_node(&ggtt->error_capture);
+	if (drm_mm_node_allocated(&ggtt->error_capture))
+		drm_mm_remove_node(&ggtt->error_capture);
 	return ret;
 }
 
