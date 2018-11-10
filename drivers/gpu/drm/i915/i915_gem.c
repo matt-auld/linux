@@ -5666,8 +5666,10 @@ i915_gem_load_init_fences(struct drm_i915_private *dev_priv)
 {
 	int i;
 
-	if (INTEL_GEN(dev_priv) >= 7 && !IS_VALLEYVIEW(dev_priv) &&
-	    !IS_CHERRYVIEW(dev_priv))
+	if (!HAS_MAPPABLE_APERTURE(dev_priv))
+		dev_priv->num_fence_regs = 0;
+	else if (INTEL_GEN(dev_priv) >= 7 && !IS_VALLEYVIEW(dev_priv) &&
+		 !IS_CHERRYVIEW(dev_priv))
 		dev_priv->num_fence_regs = 32;
 	else if (INTEL_GEN(dev_priv) >= 4 ||
 		 IS_I945G(dev_priv) || IS_I945GM(dev_priv) ||
