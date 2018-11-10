@@ -390,6 +390,8 @@ static int i915_getparam_ioctl(struct drm_device *dev, void *data,
 			return value;
 		break;
 	case I915_PARAM_MMAP_GTT_VERSION:
+		if (!HAS_MAPPABLE_APERTURE(dev_priv))
+			return -ENODEV;
 		/* Though we've started our numbering from 1, and so class all
 		 * earlier versions as 0, in effect their value is undefined as
 		 * the ioctl will report EINVAL for the unknown param!
