@@ -2831,8 +2831,10 @@ void i915_ggtt_cleanup_hw(struct drm_i915_private *dev_priv)
 
 	mutex_unlock(&dev_priv->drm.struct_mutex);
 
-	arch_phys_wc_del(ggtt->mtrr);
-	io_mapping_fini(&ggtt->iomap);
+	if (HAS_MAPPABLE_APERTURE(dev_priv)) {
+		arch_phys_wc_del(ggtt->mtrr);
+		io_mapping_fini(&ggtt->iomap);
+	}
 
 	i915_gem_cleanup_stolen(dev_priv);
 }
@@ -3214,10 +3216,13 @@ static int gen8_gmch_probe(struct i915_ggtt *ggtt)
 	int err;
 
 	/* TODO: We're not aware of mappable constraints on gen8 yet */
-	ggtt->gmadr =
-		(struct resource) DEFINE_RES_MEM(pci_resource_start(pdev, 2),
-						 pci_resource_len(pdev, 2));
-	ggtt->mappable_end = resource_size(&ggtt->gmadr);
+	/* FIXME: We probably need to add do device_info or runtime_info */
+	if (!HAS_LMEM(dev_priv)) {
+		ggtt->gmadr =
+			(struct resource) DEFINE_RES_MEM(pci_resource_start(pdev, 2),
+							 pci_resource_len(pdev, 2));
+		ggtt->mappable_end = resource_size(&ggtt->gmadr);
+	}
 
 	err = pci_set_dma_mask(pdev, DMA_BIT_MASK(39));
 	if (!err)
@@ -3454,14 +3459,17 @@ int i915_ggtt_init_hw(struct drm_i915_private *dev_priv)
 		ggtt->vm.mm.color_adjust = i915_gtt_color_adjust;
 	mutex_unlock(&dev_priv->drm.struct_mutex);
 
-	if (!io_mapping_init_wc(&dev_priv->ggtt.iomap,
-				dev_priv->ggtt.gmadr.start,
-				dev_priv->ggtt.mappable_end)) {
-		ret = -EIO;
-		goto out_gtt_cleanup;
-	}
+	if (HAS_MAPPABLE_APERTURE(dev_priv)) {
+		if (!io_mapping_init_wc(&dev_priv->ggtt.iomap,
+					dev_priv->ggtt.gmadr.start,
+					dev_priv->ggtt.mappable_end)) {
+			ret = -EIO;
+			goto out_gtt_cleanup;
+		}
 
-	ggtt->mtrr = arch_phys_wc_add(ggtt->gmadr.start, ggtt->mappable_end);
+		ggtt->mtrr = arch_phys_wc_add(ggtt->gmadr.start,
+					      ggtt->mappable_end);
+	}
 
 	/*
 	 * Initialise stolen early so that we may reserve preallocated
