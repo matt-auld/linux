@@ -90,6 +90,7 @@ enum i915_cpu_mmap_origin_type {
 	I915_MMAP_ORIGIN_NONE = 0,
 	I915_MMAP_ORIGIN_GTT,
 	I915_MMAP_ORIGIN_OFFSET,
+	I915_MMAP_ORIGIN_DUMB,
 };
 
 struct drm_i915_gem_object {

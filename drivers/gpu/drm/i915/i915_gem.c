@@ -2157,12 +2157,16 @@ __assign_gem_object_mmap_data(struct drm_file *file,
 }
 
 int
-i915_gem_mmap_gtt(struct drm_file *file,
+i915_gem_mmap_dumb(struct drm_file *file,
 		  struct drm_device *dev,
 		  u32 handle,
 		  u64 *offset)
 {
-	return __assign_gem_object_mmap_data(file, handle, I915_MMAP_ORIGIN_GTT,
+	struct drm_i915_private *i915 = dev->dev_private;
+	enum i915_cpu_mmap_origin_type mmap_type = HAS_MAPPABLE_APERTURE(i915) ?
+		I915_MMAP_ORIGIN_GTT : I915_MMAP_ORIGIN_DUMB;
+
+	return __assign_gem_object_mmap_data(file, handle, mmap_type,
 					     0, offset);
 }
 

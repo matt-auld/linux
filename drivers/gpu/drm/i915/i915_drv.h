@@ -3031,7 +3031,7 @@ i915_mutex_lock_interruptible(struct drm_device *dev)
 int i915_gem_dumb_create(struct drm_file *file_priv,
 			 struct drm_device *dev,
 			 struct drm_mode_create_dumb *args);
-int i915_gem_mmap_gtt(struct drm_file *file_priv, struct drm_device *dev,
+int i915_gem_mmap_dumb(struct drm_file *file_priv, struct drm_device *dev,
 		      u32 handle, u64 *offset);
 int i915_gem_mmap_gtt_version(void);
 
