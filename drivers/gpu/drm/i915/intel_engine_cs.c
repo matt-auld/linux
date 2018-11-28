@@ -502,7 +502,7 @@ static int pin_ggtt_status_page(struct intel_engine_cs *engine,
 	unsigned int flags;
 
 	flags = PIN_GLOBAL;
-	if (!HAS_LLC(engine->i915))
+	if (!HAS_LLC(engine->i915) && HAS_MAPPABLE_APERTURE(engine->i915))
 		/*
 		 * On g33, we cannot place HWS above 256MiB, so
 		 * restrict its pinning to the low mappable arena.
