@@ -152,12 +152,40 @@ out_unpin:
 	return ret;
 }
 
+static int region_lmem_vmf_fill_pages(struct drm_i915_gem_object *obj,
+				      struct vm_fault *vmf,
+				      pgoff_t page_offset)
+{
+	struct vm_area_struct *area = vmf->vma;
+	struct drm_device *dev = obj->base.dev;
+	struct drm_i915_private *i915 = to_i915(dev);
+	unsigned long size = area->vm_end - area->vm_start;
+	int i;
+	vm_fault_t vmf_ret;
+
+	for (i = 0; i < size >> PAGE_SHIFT; i++) {
+		vmf_ret = vmf_insert_pfn(area,
+					 (unsigned long)area->vm_start + i * PAGE_SIZE,
+					 i915_gem_object_lmem_io_pfn(obj, i));
+		if (vmf_ret & VM_FAULT_ERROR)
+			return vm_fault_to_errno(vmf_ret, 0);
+	}
+
+	if (!obj->userfault_count++)
+		list_add(&obj->userfault_link, &i915->mm.userfault_list);
+
+	GEM_BUG_ON(!obj->userfault_count);
+
+	return 0;
+}
+
 static const struct drm_i915_gem_object_ops region_lmem_obj_ops = {
 	.get_pages = i915_memory_region_get_pages_buddy,
 	.put_pages = i915_memory_region_put_pages_buddy,
 	.release = i915_gem_object_release_memory_region,
 	.pread = region_lmem_pread,
 	.pwrite = region_lmem_pwrite,
+	.vmf_fill_pages = region_lmem_vmf_fill_pages,
 };
 
 static struct drm_i915_gem_object *

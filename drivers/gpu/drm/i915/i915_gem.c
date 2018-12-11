@@ -38,6 +38,7 @@
 #include <linux/pci.h>
 #include <linux/dma-buf.h>
 #include <linux/mman.h>
+#include <linux/pfn_t.h>
 
 #include "i915_drv.h"
 #include "i915_gem_clflush.h"
@@ -377,6 +378,7 @@ static const struct drm_i915_gem_object_ops i915_gem_phys_ops = {
 	.get_pages = i915_gem_object_get_pages_phys,
 	.put_pages = i915_gem_object_put_pages_phys,
 	.release = i915_gem_object_release_phys,
+	.vmf_fill_pages = i915_gem_vmf_fill_pages_cpu,
 };
 
 static const struct drm_i915_gem_object_ops i915_gem_object_ops;
@@ -1938,7 +1940,7 @@ vm_fault_t i915_gem_fault(struct vm_fault *vmf)
 		goto err_unlock;
 	}
 
-	ret = __vmf_fill_pages_gtt(obj, vmf, page_offset);
+	ret = obj->ops->vmf_fill_pages(obj, vmf, page_offset);
 
 err_unlock:
 	mutex_unlock(&dev->struct_mutex);
@@ -2164,6 +2166,26 @@ i915_gem_mmap_gtt_ioctl(struct drm_device *dev, void *data,
 	struct drm_i915_gem_mmap_gtt *args = data;
 
 	return i915_gem_mmap_gtt(file, dev, args->handle, &args->offset);
+}
+
+int i915_gem_mmap(struct file *filp, struct vm_area_struct *vma)
+{
+	int ret;
+	struct drm_i915_gem_object *obj;
+
+	ret = drm_gem_mmap(filp, vma);
+	if (ret < 0)
+		return ret;
+
+	obj = to_intel_bo(vma->vm_private_data);
+	if (obj->memory_region) {
+		if (obj->mmap_origin == I915_MMAP_ORIGIN_OFFSET) {
+			vma->vm_flags &= ~VM_PFNMAP;
+			vma->vm_flags |= VM_MIXEDMAP;
+		}
+	}
+
+	return ret;
 }
 
 /* Immediately discard the backing storage */
@@ -4194,6 +4216,37 @@ void i915_gem_object_init(struct drm_i915_gem_object *obj,
 	i915_gem_info_add_obj(to_i915(obj->base.dev), obj->base.size);
 }
 
+int i915_gem_vmf_fill_pages_cpu(struct drm_i915_gem_object *obj,
+					 struct vm_fault *vmf,
+					 pgoff_t page_offset)
+{
+	struct vm_area_struct *area = vmf->vma;
+	struct drm_device *dev = obj->base.dev;
+	struct drm_i915_private *dev_priv = to_i915(dev);
+	struct page *page;
+	unsigned long pfn;
+	vm_fault_t vmf_ret;
+	pgoff_t pg_off = (vmf->address - area->vm_start) >> PAGE_SHIFT;
+
+	if (HAS_MAPPABLE_APERTURE(dev_priv))
+		return __vmf_fill_pages_gtt(obj, vmf, page_offset);
+
+	page = i915_gem_object_get_page(obj, pg_off);
+	pfn = page_to_pfn(page);
+
+	vmf_ret = vmf_insert_mixed(area, vmf->address,
+                                  __pfn_to_pfn_t(pfn, PFN_DEV));
+	if (vmf_ret & VM_FAULT_ERROR)
+		return vm_fault_to_errno(vmf_ret, 0);
+
+	if (!obj->userfault_count++)
+		list_add(&obj->userfault_link, &dev_priv->mm.userfault_list);
+
+	GEM_BUG_ON(!obj->userfault_count);
+
+	return 0;
+}
+
 static const struct drm_i915_gem_object_ops i915_gem_object_ops = {
 	.flags = I915_GEM_OBJECT_HAS_STRUCT_PAGE |
 		 I915_GEM_OBJECT_IS_SHRINKABLE,
@@ -4202,6 +4255,7 @@ static const struct drm_i915_gem_object_ops i915_gem_object_ops = {
 	.put_pages = i915_gem_object_put_pages_gtt,
 
 	.pwrite = i915_gem_object_pwrite_gtt,
+	.vmf_fill_pages = i915_gem_vmf_fill_pages_cpu,
 };
 
 static int i915_gem_object_create_shmem(struct drm_device *dev,
@@ -4818,6 +4872,8 @@ static void __i915_gem_free_objects(struct drm_i915_private *i915,
 			spin_unlock(&i915->mm.obj_lock);
 		}
 
+
+		i915_gem_release_mmap(obj);
 		mutex_unlock(&i915->drm.struct_mutex);
 
 		GEM_BUG_ON(obj->bind_count);

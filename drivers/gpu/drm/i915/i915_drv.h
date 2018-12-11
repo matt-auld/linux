@@ -3072,6 +3072,7 @@ int i915_gem_wait_for_idle(struct drm_i915_private *dev_priv,
 int __must_check i915_gem_suspend(struct drm_i915_private *dev_priv);
 void i915_gem_suspend_late(struct drm_i915_private *dev_priv);
 void i915_gem_resume(struct drm_i915_private *dev_priv);
+int i915_gem_mmap(struct file *filp, struct vm_area_struct *vma);
 vm_fault_t i915_gem_fault(struct vm_fault *vmf);
 int i915_gem_object_wait(struct drm_i915_gem_object *obj,
 			 unsigned int flags,

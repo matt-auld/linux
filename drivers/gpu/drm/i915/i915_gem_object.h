@@ -82,6 +82,8 @@ struct drm_i915_gem_object_ops {
 
 	int (*dmabuf_export)(struct drm_i915_gem_object *);
 	void (*release)(struct drm_i915_gem_object *);
+	int (*vmf_fill_pages)(struct drm_i915_gem_object *, struct vm_fault *,
+			      pgoff_t);
 };
 
 struct drm_i915_gem_object {
@@ -520,5 +522,7 @@ void i915_gem_object_set_cache_coherency(struct drm_i915_gem_object *obj,
 					 unsigned int cache_level);
 void i915_gem_object_flush_if_display(struct drm_i915_gem_object *obj);
 
+int i915_gem_vmf_fill_pages_cpu(struct drm_i915_gem_object *obj,
+				struct vm_fault *vmf,
+				pgoff_t page_offset);
 #endif
-
