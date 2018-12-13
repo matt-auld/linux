@@ -86,6 +86,12 @@ struct drm_i915_gem_object_ops {
 			      pgoff_t);
 };
 
+enum i915_cpu_mmap_origin_type {
+	I915_MMAP_ORIGIN_NONE = 0,
+	I915_MMAP_ORIGIN_GTT,
+	I915_MMAP_ORIGIN_OFFSET,
+};
+
 struct drm_i915_gem_object {
 	struct drm_gem_object base;
 
@@ -156,6 +162,10 @@ struct drm_i915_gem_object {
 	 */
 	unsigned int userfault_count;
 	struct list_head userfault_link;
+
+	enum i915_cpu_mmap_origin_type mmap_origin;
+	atomic_t mmap_count;
+	u64 mmap_flags;
 
 	struct list_head batch_pool_link;
 	I915_SELFTEST_DECLARE(struct list_head st_link);

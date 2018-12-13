@@ -2123,11 +2123,12 @@ static void i915_gem_object_free_mmap_offset(struct drm_i915_gem_object *obj)
 	drm_gem_free_mmap_offset(&obj->base);
 }
 
-int
-i915_gem_mmap_gtt(struct drm_file *file,
-		  struct drm_device *dev,
-		  u32 handle,
-		  u64 *offset)
+static int
+__assign_gem_object_mmap_data(struct drm_file *file,
+			      u32 handle,
+			      enum i915_cpu_mmap_origin_type mmap_type,
+			      u64 mmap_flags,
+			      u64 *offset)
 {
 	struct drm_i915_gem_object *obj;
 	int ret;
@@ -2136,12 +2137,33 @@ i915_gem_mmap_gtt(struct drm_file *file,
 	if (!obj)
 		return -ENOENT;
 
-	ret = i915_gem_object_create_mmap_offset(obj);
-	if (ret == 0)
-		*offset = drm_vma_node_offset_addr(&obj->base.vma_node);
+	if (atomic_read(&obj->mmap_count) &&
+	    obj->mmap_origin != mmap_type) {
+	        /* Re-map object with existing different map-type */
+		ret = -EINVAL;
+		goto err;
+	}
 
+	ret = i915_gem_object_create_mmap_offset(obj);
+	if (ret == 0) {
+		obj->mmap_origin = mmap_type;
+		obj->mmap_flags = mmap_flags;
+		*offset = drm_vma_node_offset_addr(&obj->base.vma_node);
+	}
+
+ err:
 	i915_gem_object_put(obj);
 	return ret;
+}
+
+int
+i915_gem_mmap_gtt(struct drm_file *file,
+		  struct drm_device *dev,
+		  u32 handle,
+		  u64 *offset)
+{
+	return __assign_gem_object_mmap_data(file, handle, I915_MMAP_ORIGIN_GTT,
+					     0, offset);
 }
 
 /**
@@ -2163,9 +2185,45 @@ int
 i915_gem_mmap_gtt_ioctl(struct drm_device *dev, void *data,
 			struct drm_file *file)
 {
-	struct drm_i915_gem_mmap_gtt *args = data;
+	struct drm_i915_gem_mmap_offset *args = data;
+	struct drm_i915_private *i915 = to_i915(dev);
 
-	return i915_gem_mmap_gtt(file, dev, args->handle, &args->offset);
+	if (args->flags & I915_MMAP_OFFSET_FLAGS)
+		return i915_gem_mmap_offset_ioctl(dev, data, file);
+
+	if (!HAS_MAPPABLE_APERTURE(i915)) {
+		DRM_ERROR("No aperture, cannot mmap via legacy GTT\n");
+		return -ENODEV;
+	}
+
+	return __assign_gem_object_mmap_data(file, args->handle,
+					     I915_MMAP_ORIGIN_GTT,
+					     0, &args->offset);
+}
+
+int i915_gem_mmap_offset_ioctl(struct drm_device *dev, void *data,
+			       struct drm_file *file)
+{
+	struct drm_i915_gem_mmap_offset *args = data;
+
+	if ((args->flags & (I915_MMAP_OFFSET_WC | I915_MMAP_OFFSET_WB)) &&
+	    !boot_cpu_has(X86_FEATURE_PAT))
+		return -ENODEV;
+
+        return __assign_gem_object_mmap_data(file, args->handle,
+					     I915_MMAP_ORIGIN_OFFSET,
+					     args->flags,
+					     &args->offset);
+}
+
+void i915_gem_close(struct vm_area_struct *vma)
+{
+	struct drm_gem_object *gem = vma->vm_private_data;
+	struct drm_i915_gem_object *obj = to_intel_bo(gem);
+
+	atomic_dec(&obj->mmap_count);
+
+	drm_gem_vm_close(vma);
 }
 
 int i915_gem_mmap(struct file *filp, struct vm_area_struct *vma)
@@ -2178,12 +2236,19 @@ int i915_gem_mmap(struct file *filp, struct vm_area_struct *vma)
 		return ret;
 
 	obj = to_intel_bo(vma->vm_private_data);
-	if (obj->memory_region) {
-		if (obj->mmap_origin == I915_MMAP_ORIGIN_OFFSET) {
-			vma->vm_flags &= ~VM_PFNMAP;
-			vma->vm_flags |= VM_MIXEDMAP;
-		}
+	if (obj->mmap_origin == I915_MMAP_ORIGIN_OFFSET) {
+		vma->vm_flags &= ~VM_PFNMAP;
+		vma->vm_flags |= VM_MIXEDMAP;
+		if (obj->mmap_flags & I915_MMAP_OFFSET_WC)
+			vma->vm_page_prot =
+				pgprot_writecombine(vm_get_page_prot(vma->vm_flags));
+		else if (obj->mmap_flags & I915_MMAP_OFFSET_WB)
+			vma->vm_page_prot = vm_get_page_prot(vma->vm_flags);
+		else if (obj->mmap_flags & I915_MMAP_OFFSET_UC)
+			vma->vm_page_prot =
+				pgprot_noncached(vm_get_page_prot(vma->vm_flags));
 	}
+	atomic_inc(&obj->mmap_count);
 
 	return ret;
 }
@@ -4228,7 +4293,8 @@ int i915_gem_vmf_fill_pages_cpu(struct drm_i915_gem_object *obj,
 	vm_fault_t vmf_ret;
 	pgoff_t pg_off = (vmf->address - area->vm_start) >> PAGE_SHIFT;
 
-	if (HAS_MAPPABLE_APERTURE(dev_priv))
+	if (HAS_MAPPABLE_APERTURE(dev_priv) &&
+	    obj->mmap_origin == I915_MMAP_ORIGIN_GTT)
 		return __vmf_fill_pages_gtt(obj, vmf, page_offset);
 
 	page = i915_gem_object_get_page(obj, pg_off);
