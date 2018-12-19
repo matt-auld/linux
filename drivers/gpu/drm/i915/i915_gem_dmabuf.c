@@ -268,9 +268,23 @@ static void i915_gem_object_put_pages_dmabuf(struct drm_i915_gem_object *obj,
 				 DMA_BIDIRECTIONAL);
 }
 
+static int i915_gem_vmf_fill_pages_dmabuf(struct drm_i915_gem_object *obj,
+					  struct vm_fault *vmf,
+					  pgoff_t page_offset)
+{
+	struct drm_device *dev = obj->base.dev;
+	struct drm_i915_private *dev_priv = to_i915(dev);
+
+	if (!HAS_MAPPABLE_APERTURE(dev_priv))
+		return -EFAULT;
+
+	return i915_vmf_fill_pages_gtt(obj, vmf, page_offset);
+}
+
 static const struct drm_i915_gem_object_ops i915_gem_object_dmabuf_ops = {
 	.get_pages = i915_gem_object_get_pages_dmabuf,
 	.put_pages = i915_gem_object_put_pages_dmabuf,
+	.vmf_fill_pages = i915_gem_vmf_fill_pages_dmabuf,
 };
 
 struct drm_gem_object *i915_gem_prime_import(struct drm_device *dev,

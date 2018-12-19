@@ -1797,9 +1797,9 @@ compute_partial_view(const struct drm_i915_gem_object *obj,
  * The current feature set supported by i915_gem_fault() and thus GTT mmaps
  * is exposed via I915_PARAM_MMAP_GTT_VERSION (see i915_gem_mmap_gtt_version).
  */
-static int __vmf_fill_pages_gtt(struct drm_i915_gem_object *obj,
-				struct vm_fault *vmf,
-				pgoff_t page_offset)
+int i915_vmf_fill_pages_gtt(struct drm_i915_gem_object *obj,
+			    struct vm_fault *vmf,
+			    pgoff_t page_offset)
 {
 #define MIN_CHUNK_PAGES (SZ_1M >> PAGE_SHIFT)
 	struct vm_area_struct *area = vmf->vma;
@@ -4299,7 +4299,7 @@ int i915_gem_vmf_fill_pages_cpu(struct drm_i915_gem_object *obj,
 
 	if (HAS_MAPPABLE_APERTURE(dev_priv) &&
 	    obj->mmap_origin == I915_MMAP_ORIGIN_GTT)
-		return __vmf_fill_pages_gtt(obj, vmf, page_offset);
+		return i915_vmf_fill_pages_gtt(obj, vmf, page_offset);
 
 	page = i915_gem_object_get_page(obj, pg_off);
 	pfn = page_to_pfn(page);

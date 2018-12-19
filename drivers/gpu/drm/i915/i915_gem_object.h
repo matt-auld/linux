@@ -536,4 +536,9 @@ void i915_gem_object_flush_if_display(struct drm_i915_gem_object *obj);
 int i915_gem_vmf_fill_pages_cpu(struct drm_i915_gem_object *obj,
 				struct vm_fault *vmf,
 				pgoff_t page_offset);
+
+int i915_vmf_fill_pages_gtt(struct drm_i915_gem_object *obj,
+			    struct vm_fault *vmf,
+			    pgoff_t page_offset);
+
 #endif
