@@ -9,6 +9,7 @@
 static const struct drm_i915_gem_object_ops mock_region_obj_ops = {
 	.get_pages = i915_memory_region_get_pages_buddy,
 	.put_pages = i915_memory_region_put_pages_buddy,
+	.release = i915_gem_object_release_memory_region,
 };
 
 static struct drm_i915_gem_object *

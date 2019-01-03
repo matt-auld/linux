@@ -95,6 +95,13 @@ struct drm_i915_gem_object {
 	 * List of memory region blocks allocated for this object.
 	 */
 	struct list_head blocks;
+	/**
+	 * Element within memory_region->objects or memory_region->purgeable if
+	 * the object is marked as DONTNEED. Access is protected by
+	 * memory_region->obj_lock.
+	 */
+	struct list_head region_link;
+	struct list_head tmp_link;
 
 	struct {
 		/**
