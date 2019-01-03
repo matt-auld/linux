@@ -12,6 +12,51 @@ const u32 intel_region_map[] = {
 	[INTEL_MEMORY_STOLEN] = BIT(INTEL_STOLEN + INTEL_MEMORY_TYPE_SHIFT) | BIT(0),
 };
 
+static int
+intel_memory_region_evict(struct intel_memory_region *mem,
+			  resource_size_t target,
+			  unsigned int flags)
+{
+	struct drm_i915_gem_object *obj;
+	resource_size_t found;
+	int err;
+
+	err = 0;
+	found = 0;
+
+	mutex_lock(&mem->obj_lock);
+	list_for_each_entry(obj, &mem->purgeable, mm.region_link) {
+		if (!i915_gem_object_has_pages(obj))
+			continue;
+
+		if (READ_ONCE(obj->pin_global))
+			continue;
+
+		if (atomic_read(&obj->bind_count))
+			continue;
+
+		mutex_unlock(&mem->obj_lock);
+
+		__i915_gem_object_put_pages(obj, I915_MM_SHRINKER);
+
+		mutex_lock_nested(&obj->mm.lock, I915_MM_SHRINKER);
+		if (!i915_gem_object_has_pages(obj)) {
+			obj->mm.madv = __I915_MADV_PURGED;
+			found += obj->base.size;
+		}
+		mutex_unlock(&obj->mm.lock);
+
+		if (found >= target)
+			return 0;
+
+		mutex_lock(&mem->obj_lock);
+	}
+
+	err = -ENOSPC;
+	mutex_unlock(&mem->obj_lock);
+	return err;
+}
+
 static u64
 intel_memory_region_free_pages(struct intel_memory_region *mem,
 			       struct list_head *blocks)
@@ -63,7 +108,8 @@ __intel_memory_region_get_pages_buddy(struct intel_memory_region *mem,
 	do {
 		struct i915_buddy_block *block;
 		unsigned int order;
-
+		bool retry = true;
+retry:
 		order = fls(n_pages) - 1;
 		GEM_BUG_ON(order > mem->mm.max_order);
 
@@ -72,9 +118,24 @@ __intel_memory_region_get_pages_buddy(struct intel_memory_region *mem,
 			if (!IS_ERR(block))
 				break;
 
-			/* XXX: some kind of eviction pass, local to the device */
-			if (flags & I915_ALLOC_CONTIGUOUS || !order--)
-				goto err_free_blocks;
+			if (flags & I915_ALLOC_CONTIGUOUS || !order--) {
+				resource_size_t target;
+				int err;
+
+				if (!retry)
+					goto err_free_blocks;
+
+				target = n_pages * mem->mm.chunk_size;
+
+				mutex_unlock(&mem->mm_lock);
+				err = intel_memory_region_evict(mem, target, 0);
+				mutex_lock(&mem->mm_lock);
+				if (err)
+					goto err_free_blocks;
+
+				retry = false;
+				goto retry;
+			}
 		} while (1);
 
 		n_pages -= BIT(order);
@@ -146,6 +207,10 @@ intel_memory_region_create(struct drm_i915_private *i915,
 	mem->io_start = io_start;
 	mem->min_page_size = min_page_size;
 	mem->ops = ops;
+
+	mutex_init(&mem->obj_lock);
+	INIT_LIST_HEAD(&mem->objects);
+	INIT_LIST_HEAD(&mem->purgeable);
 
 	mutex_init(&mem->mm_lock);
 

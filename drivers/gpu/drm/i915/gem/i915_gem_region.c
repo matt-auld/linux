@@ -102,6 +102,17 @@ void i915_gem_object_init_memory_region(struct drm_i915_gem_object *obj,
 {
 	INIT_LIST_HEAD(&obj->mm.blocks);
 	obj->mm.region= mem;
+
+	mutex_lock(&mem->obj_lock);
+	list_add(&obj->mm.region_link, &mem->objects);
+	mutex_unlock(&mem->obj_lock);
+}
+
+void i915_gem_object_release_memory_region(struct drm_i915_gem_object *obj)
+{
+	mutex_lock(&obj->mm.region->obj_lock);
+	list_del(&obj->mm.region_link);
+	mutex_unlock(&obj->mm.region->obj_lock);
 }
 
 struct drm_i915_gem_object *

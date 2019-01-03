@@ -78,6 +78,11 @@ struct intel_memory_region {
 	unsigned int type;
 	unsigned int instance;
 	unsigned int id;
+
+	/* Protects access to objects and purgeable */
+	struct mutex obj_lock;
+	struct list_head objects;
+	struct list_head purgeable;
 };
 
 int intel_memory_region_init_buddy(struct intel_memory_region *mem);
