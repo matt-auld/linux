@@ -1141,8 +1141,7 @@ static int __cpu_check_lmem(struct drm_i915_gem_object *obj, u32 dword, u32 val)
 		u32 __iomem *base;
 		u32 read_val;
 
-		base = (void __force *)io_mapping_map_atomic_wc(&obj->memory_region->iomap,
-								i915_gem_object_get_dma_address(obj, n));
+		base = i915_gem_object_lmem_io_map_page(obj, n);
 
 		read_val = ioread32(base + dword);
 		io_mapping_unmap_atomic(base);

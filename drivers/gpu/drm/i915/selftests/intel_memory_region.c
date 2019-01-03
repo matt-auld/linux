@@ -10,6 +10,9 @@
 #include "mock_context.h"
 #include "mock_drm.h"
 
+typedef int (*cpu_check_fn_t)(struct drm_i915_gem_object *obj,
+			      u32 __iomem *base, u32 dword, u32 val);
+
 static void close_objects(struct list_head *objects)
 {
 	struct drm_i915_gem_object *obj, *on;
@@ -470,7 +473,9 @@ err_request:
 	return err;
 }
 
-static int igt_cpu_check(struct drm_i915_gem_object *obj, u32 dword, u32 val)
+static int igt_cpu_check(struct drm_i915_gem_object *obj,
+			 u32 __iomem *base,
+			 u32 dword, u32 val)
 {
 	unsigned long n;
 	int err;
@@ -487,8 +492,7 @@ static int igt_cpu_check(struct drm_i915_gem_object *obj, u32 dword, u32 val)
 		u32 __iomem *base;
 		u32 read_val;
 
-		base = (void __force *) io_mapping_map_atomic_wc(&obj->memory_region->iomap,
-								 i915_gem_object_get_dma_address(obj, n));
+		base = i915_gem_object_lmem_io_map_page(obj, n);
 
 		read_val = ioread32(base + dword);
 		io_mapping_unmap_atomic(base);
@@ -506,11 +510,13 @@ static int igt_cpu_check(struct drm_i915_gem_object *obj, u32 dword, u32 val)
 
 static int igt_gpu_fill(struct i915_gem_context *ctx,
 			struct drm_i915_gem_object *obj,
-			u32 val)
+			cpu_check_fn_t cpu_check,
+			u32 __iomem *base)
 {
 	struct drm_i915_private *i915 = ctx->i915;
 	struct i915_address_space *vm = ctx->ppgtt ? &ctx->ppgtt->vm : &i915->ggtt.vm;
 	struct i915_vma *vma;
+	struct rnd_state prng;
 	u32 dword;
 	int err;
 
@@ -524,12 +530,14 @@ static int igt_gpu_fill(struct i915_gem_context *ctx,
 		return err;
 	}
 
+	prandom_seed_state(&prng, i915_selftest.random_seed);
 	for (dword = 0; dword < PAGE_SIZE / sizeof(u32); ++dword) {
+		u32 val = prandom_u32_state(&prng);
 		err = igt_gpu_write(vma, ctx, i915->engine[RCS], dword, val);
 		if (err)
 			break;
 
-		err = igt_cpu_check(obj, dword, val);
+		err = cpu_check(obj, base, dword, val);
 		if (err)
 			break;
 	}
@@ -628,7 +636,7 @@ static int igt_lmem_write_gpu(void *arg)
 	if (err)
 		goto out_put;
 
-	err = igt_gpu_fill(ctx, obj, 0xdeadbeaf);
+	err = igt_gpu_fill(ctx, obj, igt_cpu_check, NULL);
 	if (err) {
 		pr_err("igt_gpu_fill failed(%d)\n", err);
 		goto out_unpin;
@@ -640,6 +648,92 @@ out_put:
 	i915_gem_object_put(obj);
 
 	return err;
+}
+
+static int igt_lmem_cpu_check(struct drm_i915_gem_object *obj,
+			      u32 __iomem *base, u32 dword, u32 val)
+{
+	u32 read_val;
+	int err;
+
+	err = i915_gem_object_wait(obj,
+				   I915_WAIT_INTERRUPTIBLE |
+				   I915_WAIT_LOCKED,
+				   MAX_SCHEDULE_TIMEOUT);
+	if (err)
+		return err;
+
+	err = i915_gem_object_pin_pages(obj);
+	if (err)
+		return err;
+
+	read_val = ioread32(base + dword);
+	if (read_val != val) {
+		pr_err("base[%u]=0x%x, val=0x%x\n",
+		       dword, read_val, val);
+		return -EINVAL;
+	}
+
+	i915_gem_object_unpin_pages(obj);
+	return 0;
+}
+
+static int igt_lmem_write_cpu(void *arg)
+{
+	struct i915_gem_context *ctx = arg;
+	struct drm_i915_private *i915 = ctx->i915;
+	struct drm_i915_gem_object *obj;
+	struct rnd_state prng;
+	u32 __iomem *vaddr;
+	u32 dword;
+	int ret = 0;
+
+	obj = i915_gem_object_create_lmem(i915, PAGE_SIZE, I915_BO_ALLOC_CONTIGUOUS);
+	if (IS_ERR(obj))
+		return PTR_ERR(obj);
+
+	ret = i915_gem_object_pin_pages(obj);
+	if (ret)
+		goto out_put;
+
+	vaddr = i915_gem_object_pin_map(obj, I915_MAP_WC);
+	if (IS_ERR(vaddr)) {
+		pr_err("Failed to iomap lmembar; err=%d\n", (int)PTR_ERR(vaddr));
+		ret = PTR_ERR(vaddr);
+		goto out_unpin;
+	}
+
+	/* gpu write/cpu read */
+	ret = igt_gpu_fill(ctx, obj, igt_lmem_cpu_check, vaddr);
+	if (ret) {
+		pr_err("igt_gpu_fill failed(%d)\n", ret);
+		goto out_unpin;
+	}
+
+	/* cpu write/cpu read */
+	prandom_seed_state(&prng, i915_selftest.random_seed);
+	for (dword = 0; dword < PAGE_SIZE / sizeof(u32); ++dword) {
+		u32 read_val;
+		u32 val = prandom_u32_state(&prng);
+
+		iowrite32(val, vaddr + dword);
+		wmb();
+
+		read_val = ioread32(vaddr + dword);
+		if (read_val != val) {
+			pr_err("base[%u]=%u, val=%u\n", dword, read_val, val);
+			ret = -EINVAL;
+			break;
+		}
+	}
+
+	i915_gem_object_unpin_map(obj);
+
+out_unpin:
+	i915_gem_object_unpin_pages(obj);
+out_put:
+	i915_gem_object_put(obj);
+	return ret;
 }
 
 static int igt_lmem_pages_migrate(void *arg)
@@ -759,6 +853,7 @@ int intel_memory_region_live_selftests(struct drm_i915_private *i915)
 		SUBTEST(igt_smem_create_migrate),
 		SUBTEST(igt_lmem_create_migrate),
 		SUBTEST(igt_lmem_write_gpu),
+		SUBTEST(igt_lmem_write_cpu),
 		SUBTEST(igt_lmem_pages_migrate),
 	};
 	struct i915_gem_context *ctx;

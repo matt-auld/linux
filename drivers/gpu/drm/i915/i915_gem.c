@@ -2257,7 +2257,9 @@ __i915_gem_object_unset_pages(struct drm_i915_gem_object *obj)
 		void *ptr;
 
 		ptr = page_mask_bits(obj->mm.mapping);
-		if (is_vmalloc_addr(ptr))
+		if (i915_gem_object_is_lmem(obj))
+			io_mapping_unmap(ptr);
+		else if (is_vmalloc_addr(ptr))
 			vunmap(ptr);
 		else
 			kunmap(kmap_to_page(ptr));
@@ -2625,7 +2627,7 @@ unlock:
 }
 
 /* The 'mapping' part of i915_gem_object_pin_map() below */
-static void *i915_gem_object_map(const struct drm_i915_gem_object *obj,
+static void *i915_gem_object_map(struct drm_i915_gem_object *obj,
 				 enum i915_map_type type)
 {
 	unsigned long n_pages = obj->base.size >> PAGE_SHIFT;
@@ -2637,6 +2639,11 @@ static void *i915_gem_object_map(const struct drm_i915_gem_object *obj,
 	unsigned long i = 0;
 	pgprot_t pgprot;
 	void *addr;
+
+	if (i915_gem_object_is_lmem(obj)) {
+		/* XXX: we are ignoring the type here -- this is simply wc */
+		return i915_gem_object_lmem_io_map(obj, 0, obj->base.size);
+	}
 
 	/* A single page can always be kmapped */
 	if (n_pages == 1 && type == I915_MAP_WB)
@@ -2683,7 +2690,8 @@ void *i915_gem_object_pin_map(struct drm_i915_gem_object *obj,
 	void *ptr;
 	int ret;
 
-	if (unlikely(!i915_gem_object_has_struct_page(obj)))
+	if (unlikely(!i915_gem_object_has_struct_page(obj) &&
+		     !i915_gem_object_is_lmem(obj)))
 		return ERR_PTR(-ENXIO);
 
 	ret = mutex_lock_interruptible(&obj->mm.lock);
@@ -2715,7 +2723,9 @@ void *i915_gem_object_pin_map(struct drm_i915_gem_object *obj,
 			goto err_unpin;
 		}
 
-		if (is_vmalloc_addr(ptr))
+		if (i915_gem_object_is_lmem(obj))
+			io_mapping_unmap(ptr);
+		else if (is_vmalloc_addr(ptr))
 			vunmap(ptr);
 		else
 			kunmap(kmap_to_page(ptr));

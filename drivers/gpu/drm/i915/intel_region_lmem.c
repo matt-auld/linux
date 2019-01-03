@@ -47,6 +47,30 @@ static const struct intel_memory_region_ops region_lmem_ops = {
 	.create_object = region_lmem_object_create,
 };
 
+/* XXX: Time to vfunc your life up? */
+void __iomem *i915_gem_object_lmem_io_map_page(struct drm_i915_gem_object *obj,
+					       unsigned long n)
+{
+	resource_size_t offset;
+
+	offset = i915_gem_object_get_dma_address(obj, n);
+
+	return io_mapping_map_atomic_wc(&obj->memory_region->iomap, offset);
+}
+
+void __iomem *i915_gem_object_lmem_io_map(struct drm_i915_gem_object *obj,
+					  unsigned long n,
+					  unsigned long size)
+{
+	resource_size_t offset;
+
+	GEM_BUG_ON(!(obj->flags & I915_BO_ALLOC_CONTIGUOUS));
+
+	offset = i915_gem_object_get_dma_address(obj, n);
+
+	return io_mapping_map_wc(&obj->memory_region->iomap, offset, size);
+}
+
 unsigned long i915_gem_object_lmem_io_pfn(struct drm_i915_gem_object *obj,
 					  unsigned long n)
 {
