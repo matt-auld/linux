@@ -80,7 +80,15 @@ struct intel_memory_region {
 	unsigned int type;
 	unsigned int instance;
 	unsigned int id;
+
+	/* Protects access to objects and purgeable */
+	struct mutex obj_lock;
+	struct list_head objects;
+	struct list_head purgeable;
 };
+
+int i915_memory_region_evict(struct intel_memory_region *mem,
+			     resource_size_t target);
 
 int i915_memory_region_init_buddy(struct intel_memory_region *mem);
 void i915_memory_region_release_buddy(struct intel_memory_region *mem);
@@ -88,6 +96,8 @@ void i915_memory_region_release_buddy(struct intel_memory_region *mem);
 int i915_memory_region_get_pages_buddy(struct drm_i915_gem_object *obj);
 void i915_memory_region_put_pages_buddy(struct drm_i915_gem_object *obj,
 					struct sg_table *pages);
+
+void i915_gem_object_release_memory_region(struct drm_i915_gem_object *obj);
 
 struct intel_memory_region *
 intel_memory_region_create(struct drm_i915_private *i915,
