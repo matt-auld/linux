@@ -4626,6 +4626,127 @@ int i915_gem_object_clear_blt(struct i915_gem_context *ctx,
 	return i915_gem_object_fill_blt(ctx, obj, 0);
 }
 
+int i915_gem_object_prepare_move(struct drm_i915_gem_object *obj)
+{
+	int err;
+
+	lockdep_assert_held(&obj->base.dev->struct_mutex);
+
+	if (obj->mm.madv != I915_MADV_WILLNEED)
+		return -EINVAL;
+
+	if (i915_gem_object_needs_bit17_swizzle(obj))
+		return -EINVAL;
+
+	if (atomic_read(&obj->mm.pages_pin_count) > obj->bind_count)
+		return -EBUSY;
+
+	if (obj->pin_global)
+		return -EBUSY;
+
+	i915_gem_release_mmap(obj);
+
+	GEM_BUG_ON(obj->mm.mapping);
+	GEM_BUG_ON(obj->base.filp && mapping_mapped(obj->base.filp->f_mapping));
+
+	err = i915_gem_object_wait(obj,
+				   I915_WAIT_INTERRUPTIBLE |
+				   I915_WAIT_LOCKED |
+				   I915_WAIT_ALL,
+				   MAX_SCHEDULE_TIMEOUT);
+	if (err)
+		return err;
+
+	return i915_gem_object_unbind(obj);
+}
+
+int i915_gem_object_migrate(struct i915_gem_context *ctx,
+			    struct drm_i915_gem_object *obj,
+			    enum intel_region_id id)
+{
+	struct drm_i915_private *i915 = to_i915(obj->base.dev);
+	struct drm_i915_gem_object *donor;
+	struct intel_memory_region *mem;
+	int err = 0;
+
+	lockdep_assert_held(&i915->drm.struct_mutex);
+
+	GEM_BUG_ON(id >= INTEL_MEMORY_UKNOWN);
+	GEM_BUG_ON(obj->memory_region->id == id);
+	GEM_BUG_ON(obj->mm.madv != I915_MADV_WILLNEED);
+
+	mem = i915->regions[id];
+
+	donor = i915_gem_object_create_region(mem, obj->base.size, 0);
+	if (IS_ERR(donor))
+		return PTR_ERR(donor);
+
+	/* Copy backing-pages if we have to */
+	if (i915_gem_object_has_pages(obj)) {
+		struct sg_table *pages;
+
+		err = i915_gem_object_pin_pages(obj);
+		if (err)
+			goto err_put_donor;
+
+		err = i915_gem_object_copy_blt(ctx, obj, donor);
+		if (err)
+			goto err_put_donor;
+
+		i915_retire_requests(i915);
+
+		i915_gem_object_unbind(donor);
+		err = i915_gem_object_unbind(obj);
+		if (err)
+			goto err_put_donor;
+
+		mutex_lock(&obj->mm.lock);
+
+		pages = fetch_and_zero(&obj->mm.pages);
+		obj->ops->put_pages(obj, pages);
+
+		obj->mm.pages = __i915_gem_object_unset_pages(donor);
+		memcpy(&obj->mm.page_sizes, &donor->mm.page_sizes,
+		       sizeof(struct i915_page_sizes));
+
+		obj->mm.get_page.sg_pos = obj->mm.pages->sgl;
+		obj->mm.get_page.sg_idx = 0;
+		__i915_gem_object_reset_page_iter(obj);
+
+		mutex_unlock(&obj->mm.lock);
+	}
+
+	if (obj->ops->release)
+		obj->ops->release(obj);
+
+	/* We need still need a little special casing for shmem */
+	if (obj->base.filp)
+		fput(fetch_and_zero(&obj->base.filp));
+	else
+		obj->base.filp = fetch_and_zero(&donor->base.filp);
+
+	obj->base.size = donor->base.size;
+	obj->memory_region = mem;
+	obj->flags = donor->flags;
+	obj->ops = donor->ops;
+
+	list_replace_init(&donor->blocks, &obj->blocks);
+
+	mutex_lock(&mem->obj_lock);
+	list_add(&obj->region_link, &mem->objects);
+	mutex_unlock(&mem->obj_lock);
+
+	GEM_BUG_ON(i915_gem_object_has_pages(donor));
+	GEM_BUG_ON(i915_gem_object_has_pinned_pages(donor));
+
+err_put_donor:
+	i915_gem_object_put(donor);
+	if (i915_gem_object_has_pinned_pages(obj))
+		i915_gem_object_unpin_pages(obj);
+
+	return err;
+}
+
 static void __i915_gem_free_objects(struct drm_i915_private *i915,
 				    struct llist_node *freed)
 {

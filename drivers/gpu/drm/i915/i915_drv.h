@@ -2823,6 +2823,11 @@ i915_gem_object_create_from_data(struct drm_i915_private *dev_priv,
 void i915_gem_close_object(struct drm_gem_object *gem, struct drm_file *file);
 void i915_gem_free_object(struct drm_gem_object *obj);
 
+int i915_gem_object_prepare_move(struct drm_i915_gem_object *obj);
+int i915_gem_object_migrate(struct i915_gem_context *ctx,
+			    struct drm_i915_gem_object *obj,
+			    enum intel_region_id id);
+
 static inline void i915_gem_drain_freed_objects(struct drm_i915_private *i915)
 {
 	if (!atomic_read(&i915->mm.free_count))
