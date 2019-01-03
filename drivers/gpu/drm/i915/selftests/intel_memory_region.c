@@ -848,12 +848,88 @@ static int perf_memcpy(void *arg)
 	return 0;
 }
 
+static void igt_mark_evictable(struct drm_i915_gem_object *obj)
+{
+	i915_gem_object_unpin_pages(obj);
+	obj->mm.madv = I915_MADV_DONTNEED;
+	list_move(&obj->mm.region_link, &obj->mm.region->objects.purgeable);
+}
+
+static int igt_mock_shrink(void *arg)
+{
+	struct intel_memory_region *mem = arg;
+	struct drm_i915_gem_object *obj;
+	unsigned long n_objects;
+	LIST_HEAD(objects);
+	resource_size_t target;
+	resource_size_t total;
+	int err = 0;
+
+	target = mem->mm.chunk_size;
+	total = resource_size(&mem->region);
+	n_objects = total / target;
+
+	while (n_objects--) {
+		obj = i915_gem_object_create_region(mem,
+						    target,
+						    0);
+		if (IS_ERR(obj)) {
+			err = PTR_ERR(obj);
+			goto err_close_objects;
+		}
+
+		list_add(&obj->st_link, &objects);
+
+		err = i915_gem_object_pin_pages(obj);
+		if (err)
+			goto err_close_objects;
+
+		/*
+		 * Make half of the region evictable, though do so in a
+		 * horribly fragmented fashion.
+		 */
+		if (n_objects % 2)
+			igt_mark_evictable(obj);
+	}
+
+	while (target <= total / 2) {
+		obj = i915_gem_object_create_region(mem, target, 0);
+		if (IS_ERR(obj)) {
+			err = PTR_ERR(obj);
+			goto err_close_objects;
+		}
+
+		list_add(&obj->st_link, &objects);
+
+		/* Provoke the shrinker to start violently swinging its axe! */
+		err = i915_gem_object_pin_pages(obj);
+		if (err) {
+			pr_err("failed to shrink for target=%pa", &target);
+			goto err_close_objects;
+		}
+
+		/* Again, half of the region should remain evictable */
+		igt_mark_evictable(obj);
+
+		target <<= 1;
+	}
+
+err_close_objects:
+	close_objects(mem, &objects);
+
+	if (err == -ENOMEM)
+		err = 0;
+
+	return err;
+}
+
 int intel_memory_region_mock_selftests(void)
 {
 	static const struct i915_subtest tests[] = {
 		SUBTEST(igt_mock_fill),
 		SUBTEST(igt_mock_contiguous),
 		SUBTEST(igt_mock_splintered_region),
+		SUBTEST(igt_mock_shrink),
 	};
 	struct intel_memory_region *mem;
 	struct drm_i915_private *i915;

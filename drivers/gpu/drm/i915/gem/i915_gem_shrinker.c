@@ -16,6 +16,7 @@
 #include "gt/intel_gt_requests.h"
 
 #include "i915_trace.h"
+#include "gt/intel_gt_requests.h"
 
 static bool swap_available(void)
 {
@@ -269,6 +270,64 @@ unsigned long i915_gem_shrink_all(struct drm_i915_private *i915)
 	}
 
 	return freed;
+}
+
+int i915_gem_shrink_memory_region(struct intel_memory_region *mem,
+				  resource_size_t target)
+{
+	struct drm_i915_private *i915 = mem->i915;
+	struct drm_i915_gem_object *obj;
+	resource_size_t purged;
+	LIST_HEAD(purgeable);
+	int err = -ENOSPC;
+
+	intel_gt_retire_requests(&i915->gt);
+
+	purged = 0;
+
+	mutex_lock(&mem->objects.lock);
+
+	while ((obj = list_first_entry_or_null(&mem->objects.purgeable,
+					       typeof(*obj),
+					       mm.region_link))) {
+		list_move_tail(&obj->mm.region_link, &purgeable);
+
+		if (!i915_gem_object_has_pages(obj))
+			continue;
+
+		if (i915_gem_object_is_framebuffer(obj))
+			continue;
+
+		if (!kref_get_unless_zero(&obj->base.refcount))
+			continue;
+
+		mutex_unlock(&mem->objects.lock);
+
+		if (!i915_gem_object_unbind(obj, I915_GEM_OBJECT_UNBIND_ACTIVE)) {
+			if (i915_gem_object_trylock(obj)) {
+				__i915_gem_object_put_pages(obj);
+				if (!i915_gem_object_has_pages(obj)) {
+					purged += obj->base.size;
+					if (!i915_gem_object_is_volatile(obj))
+						obj->mm.madv = __I915_MADV_PURGED;
+				}
+				i915_gem_object_unlock(obj);
+			}
+		}
+
+		i915_gem_object_put(obj);
+
+		mutex_lock(&mem->objects.lock);
+
+		if (purged >= target) {
+			err = 0;
+			break;
+		}
+	}
+
+	list_splice_tail(&purgeable, &mem->objects.purgeable);
+	mutex_unlock(&mem->objects.lock);
+	return err;
 }
 
 static unsigned long

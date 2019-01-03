@@ -97,7 +97,8 @@ __intel_memory_region_get_pages_buddy(struct intel_memory_region *mem,
 	do {
 		struct i915_buddy_block *block;
 		unsigned int order;
-
+		bool retry = true;
+retry:
 		order = fls(n_pages) - 1;
 		GEM_BUG_ON(order > mem->mm.max_order);
 		GEM_BUG_ON(order < min_order);
@@ -107,8 +108,25 @@ __intel_memory_region_get_pages_buddy(struct intel_memory_region *mem,
 			if (!IS_ERR(block))
 				break;
 
-			if (order-- == min_order)
-				goto err_free_blocks;
+			if (order-- == min_order) {
+				resource_size_t target;
+				int err;
+
+				if (!retry)
+					goto err_free_blocks;
+
+				target = n_pages * mem->mm.chunk_size;
+
+				mutex_unlock(&mem->mm_lock);
+				err = i915_gem_shrink_memory_region(mem,
+								    target);
+				mutex_lock(&mem->mm_lock);
+				if (err)
+					goto err_free_blocks;
+
+				retry = false;
+				goto retry;
+			}
 		} while (1);
 
 		n_pages -= BIT(order);
