@@ -360,6 +360,7 @@ typedef struct _drm_i915_sarea {
 #define DRM_I915_GEM_VM_CREATE		0x3a
 #define DRM_I915_GEM_VM_DESTROY		0x3b
 #define DRM_I915_GEM_MMAP_OFFSET   	DRM_I915_GEM_MMAP_GTT
+#define DRM_I915_GEM_OBJECT_SETPARAM	DRM_I915_GEM_CONTEXT_SETPARAM
 /* Must be kept compact -- no holes */
 
 #define DRM_IOCTL_I915_INIT		DRM_IOW( DRM_COMMAND_BASE + DRM_I915_INIT, drm_i915_init_t)
@@ -423,6 +424,7 @@ typedef struct _drm_i915_sarea {
 #define DRM_IOCTL_I915_GEM_VM_CREATE	DRM_IOWR(DRM_COMMAND_BASE + DRM_I915_GEM_VM_CREATE, struct drm_i915_gem_vm_control)
 #define DRM_IOCTL_I915_GEM_VM_DESTROY	DRM_IOW (DRM_COMMAND_BASE + DRM_I915_GEM_VM_DESTROY, struct drm_i915_gem_vm_control)
 #define DRM_IOCTL_I915_GEM_MMAP_OFFSET		DRM_IOWR(DRM_COMMAND_BASE + DRM_I915_GEM_MMAP_OFFSET, struct drm_i915_gem_mmap_offset)
+#define DRM_IOCTL_I915_GEM_OBJECT_SETPARAM	DRM_IOWR(DRM_COMMAND_BASE + DRM_I915_GEM_OBJECT_SETPARAM, struct drm_i915_gem_object_param)
 
 /* Allow drivers to submit batchbuffers directly to hardware, relying
  * on the security mechanisms provided by hardware.
@@ -1595,9 +1597,34 @@ struct drm_i915_gem_context_param {
  *   i915_context_engines_bond (I915_CONTEXT_ENGINES_EXT_BOND)
  */
 #define I915_CONTEXT_PARAM_ENGINES	0xa
+
+#define I915_CONTEXT_PARAM_MAX	        0xffffffff
 /* Must be kept compact -- no holes and well documented */
 
 	__u64 value;
+};
+
+struct drm_i915_gem_object_param {
+	/** Handle for the object */
+	__u32 handle;
+
+	__u32 size;
+
+	/* Must be 1 */
+	__u32 object_class;
+
+	/** Set the memory region for the object listed in preference order
+	 *  as an array of region ids within data. To force an object
+	 *  to a particular memory region, set the region as the sole entry.
+	 *
+	 *  Valid region ids are derived from the id field of
+	 *  struct drm_i915_memory_region_info.
+	 *  See struct drm_i915_query_memory_region_info.
+	 */
+#define I915_PARAM_MEMORY_REGION 0x1
+	__u32 param;
+
+	__u64 data;
 };
 
 /**

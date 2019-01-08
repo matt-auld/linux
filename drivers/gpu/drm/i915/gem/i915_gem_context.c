@@ -75,6 +75,7 @@
 #include "i915_globals.h"
 #include "i915_trace.h"
 #include "i915_user_extensions.h"
+#include "i915_gem_ioctls.h"
 
 #define ALL_L3_SLICES(dev) (1 << NUM_L3_SLICES(dev)) - 1
 
@@ -2355,6 +2356,17 @@ int i915_gem_context_setparam_ioctl(struct drm_device *dev, void *data,
 
 	i915_gem_context_put(ctx);
 	return ret;
+}
+
+int i915_gem_setparam_ioctl(struct drm_device *dev, void *data,
+			    struct drm_file *file)
+{
+	struct drm_i915_gem_context_param *args = data;
+
+	if (args->param <= I915_CONTEXT_PARAM_MAX)
+		return i915_gem_context_setparam_ioctl(dev, data, file);
+
+	return i915_gem_object_setparam_ioctl(dev, data, file);
 }
 
 int i915_gem_context_reset_stats_ioctl(struct drm_device *dev,
