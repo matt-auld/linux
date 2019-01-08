@@ -1744,6 +1744,7 @@ struct drm_i915_perf_oa_config {
 struct drm_i915_query_item {
 	__u64 query_id;
 #define DRM_I915_QUERY_TOPOLOGY_INFO    1
+#define DRM_I915_QUERY_MEMREGION_INFO   2
 
 	/*
 	 * When set to zero by userspace, this is filled with the size of the
@@ -1832,13 +1833,50 @@ struct drm_i915_query_topology_info {
 	 * Offset in data[] at which the EU masks are stored.
 	 */
 	__u16 eu_offset;
-
 	/*
 	 * Stride at which each of the EU masks for each subslice are stored.
 	 */
 	__u16 eu_stride;
 
 	__u8 data[];
+};
+
+struct drm_i915_memory_region_info {
+
+	/** Base type of a region
+	 */
+#define I915_SYSTEM_MEMORY         0
+#define I915_DEVICE_MEMORY         1
+
+	/** The region id is encoded in a layout which makes it possible to
+	 *  retrieve the following information:
+	 *
+	 *  Base type: log2(ID >> 16)
+	 *  Instance:  log2(ID & 0xffff)
+	 */
+	__u32 id;
+
+	/** Reserved field. MBZ */
+	__u32 rsvd0;
+
+	/** Unused for now. MBZ */
+	__u64 flags;
+
+	__u64 size;
+
+	/** Reserved fields must be cleared to zero. */
+	__u64 rsvd1[4];
+};
+
+struct drm_i915_query_memory_region_info {
+
+	/** Number of struct drm_i915_memory_region_info structs */
+	__u32 num_regions;
+
+	/** MBZ */
+	__u32 rsvd[3];
+
+	struct drm_i915_memory_region_info regions[];
 };
 
 #if defined(__cplusplus)

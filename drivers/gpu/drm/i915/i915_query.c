@@ -95,9 +95,66 @@ static int query_topology_info(struct drm_i915_private *dev_priv,
 	return total_length;
 }
 
+static int query_memregion_info(struct drm_i915_private *dev_priv,
+				struct drm_i915_query_item *query_item)
+{
+	struct drm_i915_query_memory_region_info __user *query_ptr =
+		u64_to_user_ptr(query_item->data_ptr);
+	struct drm_i915_memory_region_info __user *info_ptr =
+		&query_ptr->regions[0];
+	struct drm_i915_memory_region_info info = { };
+	struct drm_i915_query_memory_region_info query;
+	u32 total_length;
+	int ret, i;
+
+	if (query_item->flags != 0)
+		return -EINVAL;
+
+	total_length = sizeof(struct drm_i915_query_memory_region_info);
+	for (i = 0; i < ARRAY_SIZE(dev_priv->regions); ++i) {
+		struct intel_memory_region *region = dev_priv->regions[i];
+
+		if (!region)
+			continue;
+
+		total_length += sizeof(struct drm_i915_memory_region_info);
+	}
+
+	ret = init_query_item_check(&query, sizeof(query), total_length,
+				    query_item);
+	if (ret != 0)
+		return ret;
+
+	if (query.num_regions || query.rsvd[0] || query.rsvd[1] ||
+	    query.rsvd[2])
+		return -EINVAL;
+
+	for (i = 0; i < ARRAY_SIZE(dev_priv->regions); ++i) {
+		struct intel_memory_region *region = dev_priv->regions[i];
+
+		if (!region)
+			continue;
+
+		info.id = region->id;
+		info.size = resource_size(&region->region);
+
+		if (__copy_to_user(info_ptr, &info, sizeof(info)))
+			return -EFAULT;
+
+		query.num_regions++;
+		info_ptr++;
+	}
+
+	if (__copy_to_user(query_ptr, &query, sizeof(query)))
+		return -EFAULT;
+
+	return total_length;
+}
+
 static int (* const i915_query_funcs[])(struct drm_i915_private *dev_priv,
 					struct drm_i915_query_item *query_item) = {
 	query_topology_info,
+	query_memregion_info,
 };
 
 int i915_query_ioctl(struct drm_device *dev, void *data, struct drm_file *file)
