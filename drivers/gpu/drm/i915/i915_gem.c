@@ -2257,6 +2257,117 @@ int i915_gem_mmap(struct file *filp, struct vm_area_struct *vma)
 	return ret;
 }
 
+static enum intel_region_id
+__region_id(u32 region)
+{
+	enum intel_region_id id;
+
+	for (id = 0; id < ARRAY_SIZE(intel_region_map); ++id) {
+		if (intel_region_map[id] == region)
+			return id;
+	}
+
+	return INTEL_MEMORY_UKNOWN;
+}
+
+static int i915_gem_object_region_select(struct drm_i915_private *dev_priv,
+					 struct drm_i915_gem_object_param *args,
+					 struct drm_file *file,
+					 struct drm_i915_gem_object *obj)
+{
+	struct i915_gem_context *ctx = 0;
+	intel_wakeref_t wakeref;
+	u32 __user *uregions = u64_to_user_ptr(args->data);
+	int i, ret;
+
+	ctx = i915_gem_context_lookup(file->driver_priv,
+				      DEFAULT_CONTEXT_HANDLE);
+	if (!ctx)
+	        return -ENOENT;
+
+	mutex_lock(&dev_priv->drm.struct_mutex);
+	ret = i915_gem_object_prepare_move(obj);
+	if (ret) {
+		DRM_ERROR("Cannot set memory region, object in use\n");
+	        goto err;
+	}
+
+	if (args->size > ARRAY_SIZE(intel_region_map))
+		return -EINVAL;
+
+	for (i = 0; i < args->size; i++) {
+		u32 region;
+		enum intel_region_id id;
+
+		ret = get_user(region, uregions);
+		if (ret)
+			goto err;
+
+		id = __region_id(region);
+		if (id == INTEL_MEMORY_UKNOWN) {
+			ret = -EINVAL;
+			goto err;
+		}
+
+		ret = i915_gem_object_migrate(ctx, obj, id);
+		if (!ret) {
+			if (MEMORY_TYPE_FROM_REGION(region) ==
+			    INTEL_LMEM) {
+				/*
+				 * TODO: this should be part of get_pages(),
+				 * when async get_pages arrives
+				 */
+				with_intel_runtime_pm(dev_priv, wakeref)
+					ret = i915_gem_object_clear_blt(ctx, obj);
+
+				if (ret) {
+					__i915_gem_object_release_unless_active(obj);
+					DRM_ERROR("Failed clearing the object\n");
+					goto err;
+				}
+			}
+			break;
+		}
+		++uregions;
+	}
+err:
+	mutex_unlock(&dev_priv->drm.struct_mutex);
+	i915_gem_context_put(ctx);
+	return ret;
+}
+
+int i915_gem_object_setparam_ioctl(struct drm_device *dev, void *data,
+				   struct drm_file *file)
+{
+
+	struct drm_i915_gem_object_param *args = data;
+	struct drm_i915_private *dev_priv = to_i915(dev);
+	struct drm_i915_gem_object *obj;
+	int ret;
+
+	obj = i915_gem_object_lookup(file, args->handle);
+	if (!obj)
+		return -ENOENT;
+
+	switch (args->param) {
+	case I915_PARAM_MEMORY_REGION:
+		ret = i915_gem_object_region_select(dev_priv, args, file, obj);
+		if (ret) {
+			DRM_ERROR("Cannot set memory region, migration failed\n");
+			goto err;
+		}
+
+		break;
+	default:
+		ret = -EINVAL;
+		break;
+	}
+
+err:
+	i915_gem_object_put(obj);
+	return ret;
+}
+
 /* Immediately discard the backing storage */
 static void
 i915_gem_object_truncate(struct drm_i915_gem_object *obj)

@@ -320,6 +320,7 @@ typedef struct _drm_i915_sarea {
 #define DRM_I915_PERF_REMOVE_CONFIG	0x38
 #define DRM_I915_QUERY			0x39
 #define DRM_I915_GEM_MMAP_OFFSET   	DRM_I915_GEM_MMAP_GTT
+#define DRM_I915_GEM_OBJECT_SETPARAM	0x3c
 
 #define DRM_IOCTL_I915_INIT		DRM_IOW( DRM_COMMAND_BASE + DRM_I915_INIT, drm_i915_init_t)
 #define DRM_IOCTL_I915_FLUSH		DRM_IO ( DRM_COMMAND_BASE + DRM_I915_FLUSH)
@@ -379,6 +380,7 @@ typedef struct _drm_i915_sarea {
 #define DRM_IOCTL_I915_PERF_REMOVE_CONFIG	DRM_IOW(DRM_COMMAND_BASE + DRM_I915_PERF_REMOVE_CONFIG, __u64)
 #define DRM_IOCTL_I915_QUERY			DRM_IOWR(DRM_COMMAND_BASE + DRM_I915_QUERY, struct drm_i915_query)
 #define DRM_IOCTL_I915_GEM_MMAP_OFFSET		DRM_IOWR(DRM_COMMAND_BASE + DRM_I915_GEM_MMAP_OFFSET, struct drm_i915_gem_mmap_offset)
+#define DRM_IOCTL_I915_GEM_OBJECT_SETPARAM	DRM_IOWR(DRM_COMMAND_BASE + DRM_I915_GEM_OBJECT_SETPARAM, struct drm_i915_gem_object_param)
 
 /* Allow drivers to submit batchbuffers directly to hardware, relying
  * on the security mechanisms provided by hardware.
@@ -662,6 +664,28 @@ struct drm_i915_gem_create {
 	 */
 	__u32 handle;
 	__u32 pad;
+};
+
+struct drm_i915_gem_object_param {
+	/** Handle for the object */
+	__u32 handle;
+
+	/** Set the memory region for the object listed in preference order
+	 *  as an array of region ids within data. To force an object
+	 *  to a particular memory region, set the region as the sole entry.
+	 *
+	 *  Valid region ids are derived from the id field of
+	 *  struct drm_i915_memory_region_info.
+	 *  See struct drm_i915_query_memory_region_info.
+	 */
+#define I915_PARAM_MEMORY_REGION 0x1
+	__u32 param;
+
+	__u32 size;
+	/* Unused at the moment */
+	__u32 flags;
+
+	__u64 data;
 };
 
 struct drm_i915_gem_pread {

@@ -2763,6 +2763,8 @@ ibx_disable_display_interrupt(struct drm_i915_private *dev_priv, u32 bits)
 /* i915_gem.c */
 int i915_gem_create_ioctl(struct drm_device *dev, void *data,
 			  struct drm_file *file_priv);
+int i915_gem_object_setparam_ioctl(struct drm_device *dev, void *data,
+				   struct drm_file *file_priv);
 int i915_gem_pread_ioctl(struct drm_device *dev, void *data,
 			 struct drm_file *file_priv);
 int i915_gem_pwrite_ioctl(struct drm_device *dev, void *data,
