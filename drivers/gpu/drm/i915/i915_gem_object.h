@@ -75,6 +75,8 @@ struct drm_i915_gem_object_ops {
 	int (*get_pages)(struct drm_i915_gem_object *);
 	void (*put_pages)(struct drm_i915_gem_object *, struct sg_table *);
 
+	int (*pread)(struct drm_i915_gem_object *,
+		     const struct drm_i915_gem_pread *);
 	int (*pwrite)(struct drm_i915_gem_object *,
 		      const struct drm_i915_gem_pwrite *);
 
