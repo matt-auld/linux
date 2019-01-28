@@ -215,9 +215,33 @@ region_lmem_object_create(struct intel_memory_region *mem,
 	return obj;
 }
 
+static void
+region_lmem_release(struct intel_memory_region *mem)
+{
+	io_mapping_fini(&mem->iomap);
+	i915_memory_region_release_buddy(mem);
+}
+
+static int
+region_lmem_init(struct intel_memory_region *mem)
+{
+	int ret;
+
+	if (!io_mapping_init_wc(&mem->iomap,
+				mem->io_start,
+				resource_size(&mem->region)))
+		return -EIO;
+
+	ret = i915_memory_region_init_buddy(mem);
+	if (ret)
+		io_mapping_fini(&mem->iomap);
+
+	return ret;
+}
+
 static const struct intel_memory_region_ops region_lmem_ops = {
-	.init = i915_memory_region_init_buddy,
-	.release = i915_memory_region_release_buddy,
+	.init = region_lmem_init,
+	.release = region_lmem_release,
 	.create_object = region_lmem_object_create,
 };
 
