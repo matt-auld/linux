@@ -2837,7 +2837,8 @@ static int i915_gem_init_memory_regions(struct drm_i915_private *i915)
 
 		type = MEMORY_TYPE_FROM_REGION(intel_region_map[i]);
 		switch (type) {
-		default:
+		case INTEL_SMEM:
+			mem = i915_gem_setup_smem(i915);
 			break;
 		}
 
@@ -2847,11 +2848,9 @@ static int i915_gem_init_memory_regions(struct drm_i915_private *i915)
 			goto out_cleanup;
 		}
 
-		if (mem) {
-			mem->id = intel_region_map[i];
-			mem->type = type;
-			mem->instance = MEMORY_INSTANCE_FROM_REGION(intel_region_map[i]);
-		}
+		mem->id = intel_region_map[i];
+		mem->type = type;
+		mem->instance = MEMORY_INSTANCE_FROM_REGION(intel_region_map[i]);
 
 		i915->regions[i] = mem;
 	}

@@ -2834,6 +2834,8 @@ int i915_gem_object_migrate(struct i915_gem_context *ctx,
 			    struct drm_i915_gem_object *obj,
 			    enum intel_region_id id);
 
+struct intel_memory_region *i915_gem_setup_smem(struct drm_i915_private *i915);
+
 static inline void i915_gem_drain_freed_objects(struct drm_i915_private *i915)
 {
 	if (!atomic_read(&i915->mm.free_count))

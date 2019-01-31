@@ -228,6 +228,13 @@ i915_gem_object_create_region(struct intel_memory_region *mem,
 	GEM_BUG_ON(!size);
 	GEM_BUG_ON(!IS_ALIGNED(size, I915_GTT_MIN_ALIGNMENT));
 
+	/*
+	 * There is a prevalence of the assumption that we fit the object's
+	 * page count inside a 32bit _signed_ variable. Let's document this and
+	 * catch if we ever need to fix it. In the meantime, if you do spot
+	 * such a local variable, please consider fixing!
+	 */
+
 	if (size >> PAGE_SHIFT > INT_MAX)
 		return ERR_PTR(-E2BIG);
 
@@ -252,6 +259,8 @@ i915_gem_object_create_region(struct intel_memory_region *mem,
 	mutex_unlock(&mem->obj_lock);
 
 	i915_gem_object_set_cache_coherency(obj, obj->cache_level);
+
+	trace_i915_gem_object_create(obj);
 
 	return obj;
 }

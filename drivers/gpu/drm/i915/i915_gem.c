@@ -2576,6 +2576,7 @@ bool i915_sg_trim(struct sg_table *orig_st)
 static int i915_gem_object_get_pages_gtt(struct drm_i915_gem_object *obj)
 {
 	struct drm_i915_private *dev_priv = to_i915(obj->base.dev);
+	struct intel_memory_region *mem = obj->memory_region;
 	const unsigned long page_count = obj->base.size / PAGE_SIZE;
 	unsigned long i;
 	struct address_space *mapping;
@@ -2602,7 +2603,7 @@ static int i915_gem_object_get_pages_gtt(struct drm_i915_gem_object *obj)
 	 * If there's no chance of allocating enough pages for the whole
 	 * object, bail early.
 	 */
-	if (page_count > totalram_pages())
+	if (obj->base.size > resource_size(&mem->region))
 		return -ENOMEM;
 
 	st = kmalloc(sizeof(*st), GFP_KERNEL);
@@ -4437,11 +4438,13 @@ static const struct drm_i915_gem_object_ops i915_gem_object_ops = {
 
 	.pwrite = i915_gem_object_pwrite_gtt,
 	.vmf_fill_pages = i915_gem_vmf_fill_pages_cpu,
+
+	.release = i915_gem_object_release_memory_region,
 };
 
-static int i915_gem_object_create_shmem(struct drm_device *dev,
-					struct drm_gem_object *obj,
-					size_t size)
+static int __i915_gem_object_create_shmem(struct drm_device *dev,
+					  struct drm_gem_object *obj,
+					  resource_size_t size)
 {
 	struct drm_i915_private *i915 = to_i915(dev);
 	unsigned long flags = VM_NORESERVE;
@@ -4463,31 +4466,22 @@ static int i915_gem_object_create_shmem(struct drm_device *dev,
 	return 0;
 }
 
-struct drm_i915_gem_object *
-i915_gem_object_create(struct drm_i915_private *dev_priv, u64 size)
+static struct drm_i915_gem_object *
+i915_gem_object_create_shmem(struct intel_memory_region *mem,
+			     resource_size_t size,
+			     unsigned flags)
 {
+	struct drm_i915_private *dev_priv = mem->i915;
 	struct drm_i915_gem_object *obj;
 	struct address_space *mapping;
-	unsigned int cache_level;
 	gfp_t mask;
 	int ret;
-
-	/* There is a prevalence of the assumption that we fit the object's
-	 * page count inside a 32bit _signed_ variable. Let's document this and
-	 * catch if we ever need to fix it. In the meantime, if you do spot
-	 * such a local variable, please consider fixing!
-	 */
-	if (size >> PAGE_SHIFT > INT_MAX)
-		return ERR_PTR(-E2BIG);
-
-	if (overflows_type(size, obj->base.size))
-		return ERR_PTR(-E2BIG);
 
 	obj = i915_gem_object_alloc(dev_priv);
 	if (obj == NULL)
 		return ERR_PTR(-ENOMEM);
 
-	ret = i915_gem_object_create_shmem(&dev_priv->drm, &obj->base, size);
+	ret = __i915_gem_object_create_shmem(&dev_priv->drm, &obj->base, size);
 	if (ret)
 		goto fail;
 
@@ -4520,19 +4514,58 @@ i915_gem_object_create(struct drm_i915_private *dev_priv, u64 size)
 		 * However, we maintain the display planes as UC, and so
 		 * need to rebind when first used as such.
 		 */
-		cache_level = I915_CACHE_LLC;
+		obj->cache_level = I915_CACHE_LLC;
 	else
-		cache_level = I915_CACHE_NONE;
-
-	i915_gem_object_set_cache_coherency(obj, cache_level);
-
-	trace_i915_gem_object_create(obj);
+		obj->cache_level = I915_CACHE_NONE;
 
 	return obj;
 
 fail:
 	i915_gem_object_free(obj);
 	return ERR_PTR(ret);
+}
+
+struct drm_i915_gem_object *
+i915_gem_object_create(struct drm_i915_private *i915, u64 size)
+{
+	return i915_gem_object_create_region(i915->regions[INTEL_MEMORY_SMEM],
+					     size, 0);
+}
+
+static int i915_region_smem_init(struct intel_memory_region *mem)
+{
+	int err;
+
+	err = i915_gemfs_init(mem->i915);
+	if (err)
+		DRM_NOTE("Unable to create a private tmpfs mount, hugepage support will be disabled(%d).\n", err);
+
+	return 0; /* Don't error, we can simply fallback to the kernel mnt */
+}
+
+static void i915_region_smem_release(struct intel_memory_region *mem)
+{
+	i915_gemfs_fini(mem->i915);
+}
+
+/*
+ * XXX: all of this looks much cleaner when we move all the shmem stuff to
+ * i915_gemfs.[ch] or similar, and also tidy up the pread/pwrite stuff with
+ * proper vfuncs, but we want to avoid doing that on internal, since the
+ * conflicts will be huge later...
+ */
+static const struct intel_memory_region_ops i915_region_smem_ops = {
+	.init = i915_region_smem_init,
+	.release = i915_region_smem_release,
+	.create_object = i915_gem_object_create_shmem,
+};
+
+struct intel_memory_region *i915_gem_setup_smem(struct drm_i915_private *i915)
+{
+	return intel_memory_region_create(i915, 0,
+					  totalram_pages() << PAGE_SHIFT,
+					  I915_GTT_PAGE_SIZE_4K, 0,
+					  &i915_region_smem_ops);
 }
 
 static bool discard_backing_storage(struct drm_i915_gem_object *obj)
@@ -6019,10 +6052,6 @@ int i915_gem_init_early(struct drm_i915_private *dev_priv)
 
 	spin_lock_init(&dev_priv->fb_tracking.lock);
 
-	err = i915_gemfs_init(dev_priv);
-	if (err)
-		DRM_NOTE("Unable to create a private tmpfs mount, hugepage support will be disabled(%d).\n", err);
-
 	return 0;
 
 err_dependencies:
@@ -6057,8 +6086,6 @@ void i915_gem_cleanup_early(struct drm_i915_private *dev_priv)
 
 	/* And ensure that our DESTROY_BY_RCU slabs are truly destroyed */
 	rcu_barrier();
-
-	i915_gemfs_fini(dev_priv);
 }
 
 int i915_gem_freeze(struct drm_i915_private *dev_priv)
