@@ -926,9 +926,7 @@ static int i915_driver_init_early(struct drm_i915_private *dev_priv)
 
 	intel_gt_init_early(&dev_priv->gt, dev_priv);
 
-	ret = i915_gem_init_early(dev_priv);
-	if (ret < 0)
-		goto err_workqueues;
+	i915_gem_init_early(dev_priv);
 
 	/* This must be called before any calls to HAS_PCH_* */
 	intel_detect_pch(dev_priv);
@@ -954,7 +952,6 @@ static int i915_driver_init_early(struct drm_i915_private *dev_priv)
 err_uc:
 	intel_uc_cleanup_early(dev_priv);
 	i915_gem_cleanup_early(dev_priv);
-err_workqueues:
 	i915_workqueues_cleanup(dev_priv);
 err_engines:
 	i915_engines_cleanup(dev_priv);
