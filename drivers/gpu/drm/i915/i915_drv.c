@@ -1869,6 +1869,9 @@ static void i915_driver_destroy(struct drm_i915_private *i915)
 	pci_set_drvdata(pdev, NULL);
 }
 
+struct resource intel_graphics_fake_lmem_res __ro_after_init = DEFINE_RES_MEM(0, 0);
+EXPORT_SYMBOL(intel_graphics_fake_lmem_res);
+
 /**
  * i915_driver_load - setup chip and create an initial config
  * @pdev: PCI device
@@ -1894,6 +1897,18 @@ int i915_driver_load(struct pci_dev *pdev, const struct pci_device_id *ent)
 	/* Disable nuclear pageflip by default on pre-ILK */
 	if (!i915_modparams.nuclear_pageflip && match_info->gen < 5)
 		dev_priv->drm.driver_features &= ~DRIVER_ATOMIC;
+
+	/* Check if we need fake LMEM */
+	if (INTEL_GEN(dev_priv) >= 9 && i915_modparams.fake_lmem_start > 0) {
+		intel_graphics_fake_lmem_res.start = i915_modparams.fake_lmem_start;
+		intel_graphics_fake_lmem_res.end = SZ_2G; /* Placeholder; depends on aperture size */
+
+		mkwrite_device_info(dev_priv)->memory_regions =
+			REGION_SMEM | REGION_LMEM;
+		GEM_BUG_ON(!HAS_LMEM(dev_priv));
+
+		pr_info("Intel graphics fake LMEM starts at %pa\n", &intel_graphics_fake_lmem_res.start);
+	}
 
 	ret = pci_enable_device(pdev);
 	if (ret)

@@ -2815,4 +2815,6 @@ static inline void add_taint_for_CI(unsigned int taint)
 	add_taint(taint, LOCKDEP_STILL_OK);
 }
 
+extern struct resource intel_graphics_fake_lmem_res;
+
 #endif
