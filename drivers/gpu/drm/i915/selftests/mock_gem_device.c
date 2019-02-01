@@ -179,6 +179,8 @@ struct drm_i915_private *mock_gem_device(void)
 		I915_GTT_PAGE_SIZE_64K |
 		I915_GTT_PAGE_SIZE_2M;
 
+	mkwrite_device_info(i915)->memory_regions = REGION_SMEM;
+
 	mock_uncore_init(&i915->uncore);
 	i915_gem_init__mm(i915);
 	intel_gt_init_early(&i915->gt, i915);
