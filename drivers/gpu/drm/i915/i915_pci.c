@@ -85,6 +85,9 @@
 #define GEN_DEFAULT_PAGE_SIZES \
 	.page_sizes = I915_GTT_PAGE_SIZE_4K
 
+#define GEN_DEFAULT_REGIONS \
+	.memory_regions = REGION_SMEM | REGION_STOLEN
+
 #define GEN2_FEATURES \
 	GEN(2), \
 	.num_pipes = 1, \
@@ -97,6 +100,7 @@
 	.ring_mask = RENDER_RING, \
 	.has_snoop = true, \
 	.has_coherent_ggtt = false, \
+	GEN_DEFAULT_REGIONS, \
 	GEN_DEFAULT_PIPEOFFSETS, \
 	GEN_DEFAULT_PAGE_SIZES, \
 	CURSOR_OFFSETS
@@ -136,6 +140,7 @@ static const struct intel_device_info intel_i865g_info = {
 	.ring_mask = RENDER_RING, \
 	.has_snoop = true, \
 	.has_coherent_ggtt = true, \
+	GEN_DEFAULT_REGIONS, \
 	GEN_DEFAULT_PIPEOFFSETS, \
 	GEN_DEFAULT_PAGE_SIZES, \
 	CURSOR_OFFSETS
@@ -213,6 +218,7 @@ static const struct intel_device_info intel_pineview_info = {
 	.ring_mask = RENDER_RING, \
 	.has_snoop = true, \
 	.has_coherent_ggtt = true, \
+	GEN_DEFAULT_REGIONS, \
 	GEN_DEFAULT_PIPEOFFSETS, \
 	GEN_DEFAULT_PAGE_SIZES, \
 	CURSOR_OFFSETS
@@ -262,6 +268,7 @@ static const struct intel_device_info intel_gm45_info = {
 	.has_coherent_ggtt = true, \
 	/* ilk does support rc6, but we do not implement [power] contexts */ \
 	.has_rc6 = 0, \
+	GEN_DEFAULT_REGIONS, \
 	GEN_DEFAULT_PIPEOFFSETS, \
 	GEN_DEFAULT_PAGE_SIZES, \
 	CURSOR_OFFSETS
@@ -289,6 +296,7 @@ static const struct intel_device_info intel_ironlake_m_info = {
 	.has_rc6 = 1, \
 	.has_rc6p = 1, \
 	.ppgtt = INTEL_PPGTT_ALIASING, \
+	GEN_DEFAULT_REGIONS, \
 	GEN_DEFAULT_PIPEOFFSETS, \
 	GEN_DEFAULT_PAGE_SIZES, \
 	CURSOR_OFFSETS
@@ -334,6 +342,7 @@ static const struct intel_device_info intel_sandybridge_m_gt2_info = {
 	.has_rc6 = 1, \
 	.has_rc6p = 1, \
 	.ppgtt = INTEL_PPGTT_FULL, \
+	GEN_DEFAULT_REGIONS, \
 	GEN_DEFAULT_PIPEOFFSETS, \
 	GEN_DEFAULT_PAGE_SIZES, \
 	IVB_CURSOR_OFFSETS
@@ -391,6 +400,7 @@ static const struct intel_device_info intel_valleyview_info = {
 	.has_coherent_ggtt = false,
 	.ring_mask = RENDER_RING | BSD_RING | BLT_RING,
 	.display_mmio_offset = VLV_DISPLAY_BASE,
+	GEN_DEFAULT_REGIONS,
 	GEN_DEFAULT_PAGE_SIZES,
 	GEN_DEFAULT_PIPEOFFSETS,
 	CURSOR_OFFSETS
@@ -483,6 +493,7 @@ static const struct intel_device_info intel_cherryview_info = {
 	.has_snoop = true,
 	.has_coherent_ggtt = false,
 	.display_mmio_offset = VLV_DISPLAY_BASE,
+	GEN_DEFAULT_REGIONS,
 	GEN_DEFAULT_PAGE_SIZES,
 	GEN_CHV_PIPEOFFSETS,
 	CURSOR_OFFSETS,
@@ -559,6 +570,7 @@ static const struct intel_device_info intel_skylake_gt4_info = {
 	.has_snoop = true, \
 	.has_coherent_ggtt = false, \
 	.display.has_ipc = 1, \
+	GEN_DEFAULT_REGIONS, \
 	GEN9_DEFAULT_PAGE_SIZES, \
 	GEN_DEFAULT_PIPEOFFSETS, \
 	IVB_CURSOR_OFFSETS, \
