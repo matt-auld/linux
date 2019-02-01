@@ -1732,6 +1732,13 @@ int i915_driver_load(struct pci_dev *pdev, const struct pci_device_id *ent)
 	if (!i915_modparams.nuclear_pageflip && match_info->gen < 5)
 		dev_priv->drm.driver_features &= ~DRIVER_ATOMIC;
 
+	/* Check if we need fake LMEM */
+	if (INTEL_GEN(dev_priv) >= 9 && intel_graphics_fake_lmem_res.start) {
+		mkwrite_device_info(dev_priv)->memory_regions =
+			REGION_SMEM | REGION_LMEM;
+		GEM_BUG_ON(!HAS_LMEM(dev_priv));
+	}
+
 	ret = pci_enable_device(pdev);
 	if (ret)
 		goto out_fini;

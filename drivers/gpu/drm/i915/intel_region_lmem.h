@@ -22,4 +22,7 @@ i915_gem_object_create_lmem(struct drm_i915_private *i915,
 			    resource_size_t size,
 			    unsigned int flags);
 
+struct intel_memory_region *
+i915_gem_setup_fake_lmem(struct drm_i915_private *i915);
+
 #endif /* !__INTEL_REGION_LMEM_H */

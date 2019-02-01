@@ -39,6 +39,9 @@ extern bool i915_gpu_turbo_disable(void);
 /* Exported from arch/x86/kernel/early-quirks.c */
 extern struct resource intel_graphics_stolen_res;
 
+/* Exported from arch/x86/kernel/early-printk.c */
+extern struct resource intel_graphics_fake_lmem_res;
+
 /*
  * The Bridge device's PCI config space has information about the
  * fb aperture size and the amount of pre-reserved memory.

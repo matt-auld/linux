@@ -600,6 +600,32 @@ static void __init intel_graphics_quirks(int num, int slot, int func)
 	}
 }
 
+struct resource intel_graphics_fake_lmem_res __ro_after_init = DEFINE_RES_MEM(0, 0);
+EXPORT_SYMBOL(intel_graphics_fake_lmem_res);
+
+static int __init early_i915_fake_lmem_init(char *s)
+{
+	u64 start;
+	int ret;
+
+	if (*s == '=')
+		s++;
+
+	ret = kstrtoull(s, 16, &start);
+	if (ret)
+		return ret;
+
+	intel_graphics_fake_lmem_res.start = start;
+	intel_graphics_fake_lmem_res.end = SZ_2G; /* Placeholder; depends on aperture size */
+
+	printk(KERN_INFO "Intel graphics fake LMEM starts at %pa\n",
+	       &intel_graphics_fake_lmem_res.start);
+
+	return 0;
+}
+
+early_param("i915_fake_lmem_start", early_i915_fake_lmem_init);
+
 static void __init force_disable_hpet(int num, int slot, int func)
 {
 #ifdef CONFIG_HPET_TIMER
