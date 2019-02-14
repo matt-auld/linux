@@ -252,6 +252,7 @@ void __iomem *i915_gem_object_lmem_io_map_page(struct drm_i915_gem_object *obj,
 	resource_size_t offset;
 
 	offset = i915_gem_object_get_dma_address(obj, n);
+	offset -= intel_graphics_fake_lmem_res.start;
 
 	return io_mapping_map_wc(&obj->mm.region->iomap, offset, PAGE_SIZE);
 }
@@ -262,6 +263,7 @@ void __iomem *i915_gem_object_lmem_io_map_page_atomic(struct drm_i915_gem_object
 	resource_size_t offset;
 
 	offset = i915_gem_object_get_dma_address(obj, n);
+	offset -= intel_graphics_fake_lmem_res.start;
 
 	return io_mapping_map_atomic_wc(&obj->mm.region->iomap, offset);
 }
@@ -275,6 +277,7 @@ void __iomem *i915_gem_object_lmem_io_map(struct drm_i915_gem_object *obj,
 	GEM_BUG_ON(!(obj->flags & I915_BO_ALLOC_CONTIGUOUS));
 
 	offset = i915_gem_object_get_dma_address(obj, n);
+	offset -= intel_graphics_fake_lmem_res.start;
 
 	return io_mapping_map_wc(&obj->mm.region->iomap, offset, size);
 }

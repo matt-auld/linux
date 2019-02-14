@@ -2768,6 +2768,9 @@ int i915_gem_init_memory_regions(struct drm_i915_private *i915)
 		case INTEL_STOLEN:
 			mem = i915_gem_stolen_setup(i915);
 			break;
+		case INTEL_LMEM:
+			mem = intel_setup_fake_lmem(i915);
+			break;
 		}
 
 		if (IS_ERR(mem)) {
