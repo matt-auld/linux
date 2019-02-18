@@ -1182,7 +1182,11 @@ static int __igt_reset_evict_vma(struct drm_i915_private *i915,
 	struct i915_request *rq;
 	struct evict_vma arg;
 	struct hang h;
+	unsigned int pin_flags;
 	int err;
+
+	if (!i915->ggtt.num_fences && flags & EXEC_OBJECT_NEEDS_FENCE)
+		return 0;
 
 	if (!intel_engine_can_store_dword(i915->engine[RCS0]))
 		return 0;
@@ -1220,10 +1224,12 @@ static int __igt_reset_evict_vma(struct drm_i915_private *i915,
 		goto out_obj;
 	}
 
-	err = i915_vma_pin(arg.vma, 0, 0,
-			   i915_vma_is_ggtt(arg.vma) ?
-			   PIN_GLOBAL | PIN_MAPPABLE :
-			   PIN_USER);
+	pin_flags = i915_vma_is_ggtt(arg.vma) ? PIN_GLOBAL : PIN_USER;
+
+	if (flags & EXEC_OBJECT_NEEDS_FENCE)
+		pin_flags |= PIN_MAPPABLE;
+
+	err = i915_vma_pin(arg.vma, 0, 0, pin_flags);
 	if (err) {
 		i915_request_add(rq);
 		goto out_obj;

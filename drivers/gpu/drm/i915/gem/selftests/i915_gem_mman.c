@@ -184,6 +184,9 @@ static int igt_partial_tiling(void *arg)
 	int tiling;
 	int err;
 
+	if (!HAS_MAPPABLE_APERTURE(i915))
+		return 0;
+
 	/* We want to check the page mapping and fencing of a large object
 	 * mmapped through the GTT. The object we create is larger than can
 	 * possibly be mmaped as a whole, and so we must use partial GGTT vma.

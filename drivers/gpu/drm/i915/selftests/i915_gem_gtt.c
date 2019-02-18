@@ -1148,6 +1148,9 @@ static int igt_ggtt_page(void *arg)
 	unsigned int *order, n;
 	int err;
 
+	if (!HAS_MAPPABLE_APERTURE(i915))
+		return 0;
+
 	mutex_lock(&i915->drm.struct_mutex);
 
 	obj = i915_gem_object_create_internal(i915, PAGE_SIZE);
