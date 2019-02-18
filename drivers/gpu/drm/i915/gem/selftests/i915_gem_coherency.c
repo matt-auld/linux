@@ -244,7 +244,10 @@ static bool always_valid(struct drm_i915_private *i915)
 
 static bool needs_fence_registers(struct drm_i915_private *i915)
 {
-	return !intel_gt_is_wedged(&i915->gt);
+	if (intel_gt_is_wedged(&i915->gt))
+		return false;
+
+	return i915->ggtt.num_fences;
 }
 
 static bool needs_mi_store_dword(struct drm_i915_private *i915)

@@ -42,6 +42,9 @@ static void trash_stolen(struct drm_i915_private *i915)
 	unsigned long page;
 	u32 prng = 0x12345678;
 
+	if (!HAS_MAPPABLE_APERTURE(i915))
+		return;
+
 	for (page = 0; page < size; page += PAGE_SIZE) {
 		const dma_addr_t dma = i915->dsm.start + page;
 		u32 __iomem *s;
