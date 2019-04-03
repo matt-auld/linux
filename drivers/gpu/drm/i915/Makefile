@@ -74,6 +74,7 @@ i915-y += \
 	  i915_cmd_parser.o \
 	  i915_gem_batch_pool.o \
 	  i915_gem_clflush.o \
+	  i915_gem_client_blt.o \
 	  i915_gem_context.o \
 	  i915_gem_dmabuf.o \
 	  i915_gem_evict.o \
@@ -83,6 +84,7 @@ i915-y += \
 	  i915_gem_internal.o \
 	  i915_gem.o \
 	  i915_gem_object.o \
+	  i915_gem_object_blt.o \
 	  i915_gem_render_state.o \
 	  i915_gem_shrinker.o \
 	  i915_gem_stolen.o \
