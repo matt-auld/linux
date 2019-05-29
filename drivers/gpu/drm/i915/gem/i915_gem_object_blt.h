@@ -21,4 +21,12 @@ int i915_gem_object_fill_blt(struct drm_i915_gem_object *obj,
 			     struct intel_context *ce,
 			     u32 value);
 
+int intel_emit_vma_copy_blt(struct i915_request *rq,
+			    struct i915_vma *src,
+			    struct i915_vma *dst);
+
+int i915_gem_object_copy_blt(struct drm_i915_gem_object *src,
+			     struct drm_i915_gem_object *dst,
+			     struct intel_context *ce);
+
 #endif
