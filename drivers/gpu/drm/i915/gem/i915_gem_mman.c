@@ -599,6 +599,19 @@ err:
 	return ret;
 }
 
+int
+i915_gem_mmap_dumb(struct drm_file *file,
+		  struct drm_device *dev,
+		  u32 handle,
+		  u64 *offset)
+{
+	struct drm_i915_private *i915 = dev->dev_private;
+	enum i915_mmap_type mmap_type = HAS_MAPPABLE_APERTURE(i915) ?
+		I915_MMAP_TYPE_GTT : I915_MMAP_TYPE_DUMB_WC;
+
+	return __assign_gem_object_mmap_data(file, handle, mmap_type, offset);
+}
+
 /**
  * i915_gem_mmap_gtt_ioctl - prepare an object for GTT mmap'ing
  * @dev: DRM device
@@ -710,6 +723,7 @@ static void set_vmdata_mmap_offset(struct i915_mmap_offset *mmo, struct vm_area_
 {
 	switch (mmo->mmap_type) {
 	case I915_MMAP_TYPE_OFFSET_WC:
+	case I915_MMAP_TYPE_DUMB_WC:
 		vma->vm_page_prot =
 			pgprot_writecombine(vm_get_page_prot(vma->vm_flags));
 		break;
@@ -794,6 +808,7 @@ int i915_gem_mmap(struct file *filp, struct vm_area_struct *vma)
 	case I915_MMAP_TYPE_OFFSET_WC:
 	case I915_MMAP_TYPE_OFFSET_WB:
 	case I915_MMAP_TYPE_OFFSET_UC:
+	case I915_MMAP_TYPE_DUMB_WC:
 		set_vmdata_mmap_offset(mmo, vma);
 		break;
 	case I915_MMAP_TYPE_GTT:
