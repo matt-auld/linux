@@ -500,7 +500,8 @@ static void i915_gem_object_release_mmap_offset(struct drm_i915_gem_object *obj)
 	list_for_each_entry(mmo, &obj->mmap_offsets, offset) {
 		if (mmo->mmap_type == I915_MMAP_TYPE_OFFSET_WC ||
 		    mmo->mmap_type == I915_MMAP_TYPE_OFFSET_WB ||
-		    mmo->mmap_type == I915_MMAP_TYPE_OFFSET_UC)
+		    mmo->mmap_type == I915_MMAP_TYPE_OFFSET_UC ||
+		    mmo->mmap_type == I915_MMAP_TYPE_DUMB_WC)
 			drm_vma_node_unmap(&mmo->vma_node,
 					   obj->base.dev->anon_inode->i_mapping);
 	}
@@ -600,6 +601,19 @@ __assign_gem_object_mmap_data(struct drm_file *file,
 err:
 	i915_gem_object_put(obj);
 	return ret;
+}
+
+int
+i915_gem_mmap_dumb(struct drm_file *file,
+		  struct drm_device *dev,
+		  u32 handle,
+		  u64 *offset)
+{
+	struct drm_i915_private *i915 = dev->dev_private;
+	enum i915_mmap_type mmap_type = HAS_MAPPABLE_APERTURE(i915) ?
+		I915_MMAP_TYPE_GTT : I915_MMAP_TYPE_DUMB_WC;
+
+	return __assign_gem_object_mmap_data(file, handle, mmap_type, offset);
 }
 
 /**
@@ -714,6 +728,7 @@ static void set_vmdata_mmap_offset(struct i915_mmap_offset *mmo, struct vm_area_
 {
 	switch (mmo->mmap_type) {
 	case I915_MMAP_TYPE_OFFSET_WC:
+	case I915_MMAP_TYPE_DUMB_WC:
 		vma->vm_page_prot =
 			pgprot_writecombine(vm_get_page_prot(vma->vm_flags));
 		break;
@@ -801,6 +816,7 @@ int i915_gem_mmap(struct file *filp, struct vm_area_struct *vma)
 	case I915_MMAP_TYPE_OFFSET_WC:
 	case I915_MMAP_TYPE_OFFSET_WB:
 	case I915_MMAP_TYPE_OFFSET_UC:
+	case I915_MMAP_TYPE_DUMB_WC:
 		set_vmdata_mmap_offset(mmo, vma);
 		break;
 	case I915_MMAP_TYPE_GTT:

@@ -67,6 +67,7 @@ enum i915_mmap_type {
 	I915_MMAP_TYPE_OFFSET_WC,
 	I915_MMAP_TYPE_OFFSET_WB,
 	I915_MMAP_TYPE_OFFSET_UC,
+	I915_MMAP_TYPE_DUMB_WC,
 };
 
 struct i915_mmap_offset {
