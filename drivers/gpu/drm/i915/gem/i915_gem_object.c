@@ -55,6 +55,27 @@ frontbuffer_retire(struct i915_active_request *active,
 	intel_fb_obj_flush(obj, ORIGIN_CS);
 }
 
+static void i915_gem_object_funcs_free(struct drm_gem_object *obj)
+{
+	/* Unused for now. Mandatory callback */
+}
+
+static void i915_gem_object_funcs_close(struct drm_gem_object *gem_obj, struct drm_file *file)
+{
+	struct drm_i915_gem_object *obj = to_intel_bo(gem_obj);
+	struct i915_mmap_offset *mmo, *on;
+
+	mutex_lock(&obj->mmo_lock);
+	list_for_each_entry_safe(mmo, on, &obj->mmap_offsets, offset)
+		kref_put(&mmo->ref, i915_mmap_offset_object_release);
+	mutex_unlock(&obj->mmo_lock);
+}
+
+static const struct drm_gem_object_funcs i915_gem_object_funcs = {
+	.free = i915_gem_object_funcs_free,
+	.close = i915_gem_object_funcs_close,
+};
+
 void i915_gem_object_init(struct drm_i915_gem_object *obj,
 			  const struct drm_i915_gem_object_ops *ops)
 {
@@ -66,9 +87,13 @@ void i915_gem_object_init(struct drm_i915_gem_object *obj,
 	INIT_LIST_HEAD(&obj->lut_list);
 	INIT_LIST_HEAD(&obj->batch_pool_link);
 
+	mutex_init(&obj->mmo_lock);
+	INIT_LIST_HEAD(&obj->mmap_offsets);
+
 	init_rcu_head(&obj->rcu);
 
 	obj->ops = ops;
+	obj->base.funcs = &i915_gem_object_funcs;
 
 	obj->frontbuffer_ggtt_origin = ORIGIN_GTT;
 	i915_active_request_init(&obj->frontbuffer_write,
@@ -155,6 +180,7 @@ static void __i915_gem_free_objects(struct drm_i915_private *i915,
 	wakeref = intel_runtime_pm_get(&i915->runtime_pm);
 	llist_for_each_entry_safe(obj, on, freed, freed) {
 		struct i915_vma *vma, *vn;
+		struct i915_mmap_offset *mmo, *on;
 
 		trace_i915_gem_object_destroy(obj);
 
@@ -184,6 +210,7 @@ static void __i915_gem_free_objects(struct drm_i915_private *i915,
 			spin_unlock_irqrestore(&i915->mm.obj_lock, flags);
 		}
 
+		i915_gem_object_release_mmap(obj);
 		mutex_unlock(&i915->drm.struct_mutex);
 
 		GEM_BUG_ON(atomic_read(&obj->bind_count));
@@ -202,6 +229,11 @@ static void __i915_gem_free_objects(struct drm_i915_private *i915,
 			drm_prime_gem_destroy(&obj->base, NULL);
 
 		drm_gem_object_release(&obj->base);
+
+		mutex_lock(&obj->mmo_lock);
+		list_for_each_entry_safe(mmo, on, &obj->mmap_offsets, offset)
+			kref_put(&mmo->ref, i915_mmap_offset_object_release);
+		mutex_unlock(&obj->mmo_lock);
 
 		bitmap_free(obj->bit_17);
 		i915_gem_object_free(obj);

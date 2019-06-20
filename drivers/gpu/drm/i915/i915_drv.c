@@ -3124,18 +3124,12 @@ const struct dev_pm_ops i915_pm_ops = {
 	.runtime_resume = intel_runtime_resume,
 };
 
-static const struct vm_operations_struct i915_gem_vm_ops = {
-	.fault = i915_gem_fault,
-	.open = drm_gem_vm_open,
-	.close = drm_gem_vm_close,
-};
-
 static const struct file_operations i915_driver_fops = {
 	.owner = THIS_MODULE,
 	.open = drm_open,
 	.release = drm_release,
 	.unlocked_ioctl = drm_ioctl,
-	.mmap = drm_gem_mmap,
+	.mmap = i915_gem_mmap,
 	.poll = drm_poll,
 	.read = drm_read,
 	.compat_ioctl = i915_compat_ioctl,
@@ -3224,7 +3218,6 @@ static struct drm_driver driver = {
 
 	.gem_close_object = i915_gem_close_object,
 	.gem_free_object_unlocked = i915_gem_free_object,
-	.gem_vm_ops = &i915_gem_vm_ops,
 
 	.prime_handle_to_fd = drm_gem_prime_handle_to_fd,
 	.prime_fd_to_handle = drm_gem_prime_fd_to_handle,

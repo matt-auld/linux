@@ -366,14 +366,19 @@ static bool assert_mmap_offset(struct drm_i915_private *i915,
 			       int expected)
 {
 	struct drm_i915_gem_object *obj;
+	/* refcounted in create_mmap_offset */
+	struct i915_mmap_offset *mmo = kzalloc(sizeof(*mmo), GFP_KERNEL);
 	int err;
 
 	obj = i915_gem_object_create_internal(i915, size);
 	if (IS_ERR(obj))
 		return PTR_ERR(obj);
 
-	err = create_mmap_offset(obj);
+	err = create_mmap_offset(obj, mmo);
 	i915_gem_object_put(obj);
+
+	if (err)
+		kfree(mmo);
 
 	return err == expected;
 }
@@ -405,6 +410,8 @@ static int igt_mmap_offset_exhaustion(void *arg)
 	struct drm_mm *mm = &i915->drm.vma_offset_manager->vm_addr_space_mm;
 	struct drm_i915_gem_object *obj;
 	struct drm_mm_node resv, *hole;
+	/* refcounted in create_mmap_offset */
+	struct i915_mmap_offset *mmo = kzalloc(sizeof(*mmo), GFP_KERNEL);
 	u64 hole_start, hole_end;
 	int loop, err;
 
@@ -446,9 +453,10 @@ static int igt_mmap_offset_exhaustion(void *arg)
 		goto out;
 	}
 
-	err = create_mmap_offset(obj);
+	err = create_mmap_offset(obj, mmo);
 	if (err) {
 		pr_err("Unable to insert object into reclaimed hole\n");
+		kfree(mmo);
 		goto err_obj;
 	}
 
