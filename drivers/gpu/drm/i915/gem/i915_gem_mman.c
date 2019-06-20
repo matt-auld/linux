@@ -536,9 +536,39 @@ i915_gem_mmap_gtt_ioctl(struct drm_device *dev, void *data,
 			struct drm_file *file)
 {
 	struct drm_i915_gem_mmap_offset *args = data;
+	struct drm_i915_private *i915 = to_i915(dev);
+
+	if (args->flags & I915_MMAP_OFFSET_FLAGS)
+		return i915_gem_mmap_offset_ioctl(dev, data, file);
+
+	if (!HAS_MAPPABLE_APERTURE(i915)) {
+		DRM_ERROR("No aperture, cannot mmap via legacy GTT\n");
+		return -ENODEV;
+	}
 
 	return __assign_gem_object_mmap_data(file, args->handle,
 					     I915_MMAP_TYPE_GTT,
+					     &args->offset);
+}
+
+int i915_gem_mmap_offset_ioctl(struct drm_device *dev, void *data,
+			       struct drm_file *file)
+{
+	struct drm_i915_gem_mmap_offset *args = data;
+	enum i915_mmap_type type;
+
+	if ((args->flags & (I915_MMAP_OFFSET_WC | I915_MMAP_OFFSET_WB)) &&
+	    !boot_cpu_has(X86_FEATURE_PAT))
+		return -ENODEV;
+
+	if (args->flags & I915_MMAP_OFFSET_WC)
+		type = I915_MMAP_TYPE_OFFSET_WC;
+	else if (args->flags & I915_MMAP_OFFSET_WB)
+		type = I915_MMAP_TYPE_OFFSET_WB;
+	else if (args->flags & I915_MMAP_OFFSET_UC)
+		type = I915_MMAP_TYPE_OFFSET_UC;
+
+	return __assign_gem_object_mmap_data(file, args->handle, type,
 					     &args->offset);
 }
 
