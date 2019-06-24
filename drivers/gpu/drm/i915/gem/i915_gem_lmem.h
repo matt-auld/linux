@@ -7,6 +7,7 @@
 #define __I915_GEM_LMEM_H
 
 #include <linux/types.h>
+#include <linux/mman.h>
 
 struct drm_i915_private;
 struct drm_i915_gem_object;
@@ -23,6 +24,8 @@ i915_gem_object_lmem_io_map_page_atomic(struct drm_i915_gem_object *obj,
 
 resource_size_t i915_gem_object_lmem_io_offset(struct drm_i915_gem_object *obj,
 					       unsigned long n);
+
+vm_fault_t i915_gem_fault_lmem(struct vm_fault *vmf);
 
 bool i915_gem_object_is_lmem(struct drm_i915_gem_object *obj);
 

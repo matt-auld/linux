@@ -871,7 +871,7 @@ void i915_gem_runtime_suspend(struct drm_i915_private *i915)
 
 	list_for_each_entry_safe(obj, on,
 				 &i915->ggtt.userfault_list, userfault_link)
-		__i915_gem_object_release_mmap(obj);
+		__i915_gem_object_release_mmap_gtt(obj);
 
 	/*
 	 * The fence will be lost when the device powers down. If any were

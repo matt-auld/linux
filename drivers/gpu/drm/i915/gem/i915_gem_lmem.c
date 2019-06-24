@@ -6,6 +6,7 @@
 #include "intel_memory_region.h"
 #include "gem/i915_gem_region.h"
 #include "gem/i915_gem_lmem.h"
+#include "gt/intel_gt.h"
 #include "i915_drv.h"
 
 static int lmem_pread(struct drm_i915_gem_object *obj,
@@ -179,6 +180,59 @@ out_unpin:
 	return ret;
 }
 
+vm_fault_t i915_gem_fault_lmem(struct vm_fault *vmf)
+{
+	struct vm_area_struct *area = vmf->vma;
+	struct i915_mmap_offset *priv = area->vm_private_data;
+	struct drm_i915_gem_object *obj = priv->obj;
+	struct drm_device *dev = obj->base.dev;
+	struct drm_i915_private *i915 = to_i915(dev);
+	unsigned long size = area->vm_end - area->vm_start;
+	bool write = area->vm_flags & VM_WRITE;
+	vm_fault_t vmf_ret;
+	int i, ret;
+
+	/* Sanity check that we allow writing into this object */
+	if (i915_gem_object_is_readonly(obj) && write)
+		return VM_FAULT_SIGBUS;
+
+	ret = i915_gem_object_pin_pages(obj);
+	if (ret)
+		goto err;
+
+	for (i = 0; i < size >> PAGE_SHIFT; i++) {
+		vmf_ret = vmf_insert_pfn(area,
+					 (unsigned long)area->vm_start + i * PAGE_SIZE,
+					 i915_gem_object_lmem_io_offset(obj, i) >> PAGE_SHIFT);
+		if (vmf_ret & VM_FAULT_ERROR) {
+			ret = vm_fault_to_errno(vmf_ret, 0);
+			goto err;
+		}
+	}
+
+	i915_gem_object_unpin_pages(obj);
+err:
+	switch (ret) {
+	case -EIO:
+		if (!intel_gt_is_wedged(&i915->gt))
+			return VM_FAULT_SIGBUS;
+		/* fallthrough */
+	case -EAGAIN:
+	case 0:
+	case -ERESTARTSYS:
+	case -EINTR:
+	case -EBUSY:
+		return VM_FAULT_NOPAGE;
+	case -ENOMEM:
+		return VM_FAULT_OOM;
+	case -ENOSPC:
+	case -EFAULT:
+		return VM_FAULT_SIGBUS;
+	default:
+		WARN_ONCE(ret, "unhandled error in %s: %i\n", __func__, ret);
+		return VM_FAULT_SIGBUS;
+	}
+}
 
 const struct drm_i915_gem_object_ops i915_gem_lmem_obj_ops = {
 	.flags = I915_GEM_OBJECT_IS_MAPPABLE,
