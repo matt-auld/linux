@@ -5,6 +5,7 @@
  */
 
 #include <linux/mman.h>
+#include <linux/pfn_t.h>
 #include <linux/sizes.h>
 
 #include "i915_drv.h"
@@ -369,7 +370,61 @@ err:
 	}
 }
 
-void __i915_gem_object_release_mmap(struct drm_i915_gem_object *obj)
+static vm_fault_t i915_gem_fault_cpu(struct vm_fault *vmf)
+{
+	struct vm_area_struct *area = vmf->vma;
+	struct i915_mmap_offset *priv = area->vm_private_data;
+	struct drm_i915_gem_object *obj = priv->obj;
+	struct drm_device *dev = obj->base.dev;
+	struct drm_i915_private *dev_priv = to_i915(dev);
+	vm_fault_t vmf_ret;
+	unsigned long size = area->vm_end - area->vm_start;
+	bool write = area->vm_flags & VM_WRITE;
+	int i, ret;
+
+	/* Sanity check that we allow writing into this object */
+	if (i915_gem_object_is_readonly(obj) && write)
+		return VM_FAULT_SIGBUS;
+
+	ret = i915_gem_object_pin_pages(obj);
+	if (ret)
+		goto err;
+
+	for (i = 0; i < size >> PAGE_SHIFT; i++) {
+		struct page *page = i915_gem_object_get_page(obj, i);
+		vmf_ret = vmf_insert_pfn(area,
+					 (unsigned long)area->vm_start + i * PAGE_SIZE,
+					 page_to_pfn(page));
+		if (vmf_ret & VM_FAULT_ERROR) {
+			ret = vm_fault_to_errno(vmf_ret, 0);
+			break;
+		}
+	}
+
+	i915_gem_object_unpin_pages(obj);
+err:
+	switch (ret) {
+	case -EIO:
+		if (!i915_terminally_wedged(dev_priv))
+			return VM_FAULT_SIGBUS;
+	case -EAGAIN:
+	case 0:
+	case -ERESTARTSYS:
+	case -EINTR:
+	case -EBUSY:
+		return VM_FAULT_NOPAGE;
+	case -ENOMEM:
+		return VM_FAULT_OOM;
+	case -ENOSPC:
+	case -EFAULT:
+		return VM_FAULT_SIGBUS;
+	default:
+		WARN_ONCE(ret, "unhandled error in %s: %i\n", __func__, ret);
+		return VM_FAULT_SIGBUS;
+	}
+}
+
+void __i915_gem_object_release_mmap_gtt(struct drm_i915_gem_object *obj)
 {
 	struct i915_vma *vma;
 	struct i915_mmap_offset *mmo;
@@ -378,21 +433,20 @@ void __i915_gem_object_release_mmap(struct drm_i915_gem_object *obj)
 
 	obj->userfault_count = 0;
 	list_del(&obj->userfault_link);
-	list_for_each_entry(mmo, &obj->mmap_offsets, offset)
-		drm_vma_node_unmap(&mmo->vma_node,
-				   obj->base.dev->anon_inode->i_mapping);
+
+	mutex_lock(&obj->mmo_lock);
+	list_for_each_entry(mmo, &obj->mmap_offsets, offset) {
+		if (mmo->mmap_type == I915_MMAP_TYPE_GTT)
+			drm_vma_node_unmap(&mmo->vma_node,
+					   obj->base.dev->anon_inode->i_mapping);
+	}
+	mutex_unlock(&obj->mmo_lock);
 
 	for_each_ggtt_vma(vma, obj)
 		i915_vma_unset_userfault(vma);
 }
 
 /**
- * i915_gem_object_release_mmap - remove physical page mappings
- * @obj: obj in question
- *
- * Preserve the reservation of the mmapping with the DRM core code, but
- * relinquish ownership of the pages back to the system.
- *
  * It is vital that we remove the page mapping if we have mapped a tiled
  * object through the GTT and then lose the fence register due to
  * resource pressure. Similarly if the object has been moved out of the
@@ -400,7 +454,7 @@ void __i915_gem_object_release_mmap(struct drm_i915_gem_object *obj)
  * mapping will then trigger a page fault on the next user access, allowing
  * fixup by i915_gem_fault().
  */
-void i915_gem_object_release_mmap(struct drm_i915_gem_object *obj)
+static void i915_gem_object_release_mmap_gtt(struct drm_i915_gem_object *obj)
 {
 	struct drm_i915_private *i915 = to_i915(obj->base.dev);
 	intel_wakeref_t wakeref;
@@ -419,7 +473,7 @@ void i915_gem_object_release_mmap(struct drm_i915_gem_object *obj)
 	if (!obj->userfault_count)
 		goto out;
 
-	__i915_gem_object_release_mmap(obj);
+	__i915_gem_object_release_mmap_gtt(obj);
 
 	/* Ensure that the CPU's PTE are revoked and there are not outstanding
 	 * memory transactions from userspace before we return. The TLB
@@ -432,6 +486,35 @@ void i915_gem_object_release_mmap(struct drm_i915_gem_object *obj)
 
 out:
 	intel_runtime_pm_put(&i915->runtime_pm, wakeref);
+}
+
+static void i915_gem_object_release_mmap_offset(struct drm_i915_gem_object *obj)
+{
+	struct i915_mmap_offset *mmo;
+
+	mutex_lock(&obj->mmo_lock);
+	list_for_each_entry(mmo, &obj->mmap_offsets, offset) {
+		if (mmo->mmap_type == I915_MMAP_TYPE_OFFSET_WC ||
+		    mmo->mmap_type == I915_MMAP_TYPE_OFFSET_WB ||
+		    mmo->mmap_type == I915_MMAP_TYPE_OFFSET_UC ||
+		    mmo->mmap_type == I915_MMAP_TYPE_DUMB_WC)
+			drm_vma_node_unmap(&mmo->vma_node,
+					   obj->base.dev->anon_inode->i_mapping);
+	}
+	mutex_unlock(&obj->mmo_lock);
+}
+
+/**
+ * i915_gem_object_release_mmap - remove physical page mappings
+ * @obj: obj in question
+ *
+ * Preserve the reservation of the mmapping with the DRM core code, but
+ * relinquish ownership of the pages back to the system.
+ */
+void i915_gem_object_release_mmap(struct drm_i915_gem_object *obj)
+{
+	i915_gem_object_release_mmap_gtt(obj);
+	i915_gem_object_release_mmap_offset(obj);
 }
 
 static void init_mmap_offset(struct drm_i915_gem_object *obj,
@@ -611,6 +694,42 @@ static const struct vm_operations_struct i915_gem_gtt_vm_ops = {
 	.close = i915_gem_vm_close,
 };
 
+static const struct vm_operations_struct i915_gem_cpu_vm_ops = {
+	.fault = i915_gem_fault_cpu,
+	.open = i915_gem_vm_open,
+	.close = i915_gem_vm_close,
+};
+
+static const struct vm_operations_struct i915_gem_lmem_vm_ops = {
+	.fault = i915_gem_fault_lmem,
+	.open = i915_gem_vm_open,
+	.close = i915_gem_vm_close,
+};
+
+static void set_vmdata_mmap_offset(struct i915_mmap_offset *mmo, struct vm_area_struct *vma)
+{
+	switch (mmo->mmap_type) {
+	case I915_MMAP_TYPE_OFFSET_WC:
+		vma->vm_page_prot =
+			pgprot_writecombine(vm_get_page_prot(vma->vm_flags));
+		break;
+	case I915_MMAP_TYPE_OFFSET_WB:
+		vma->vm_page_prot = vm_get_page_prot(vma->vm_flags);
+		break;
+	case I915_MMAP_TYPE_OFFSET_UC:
+		vma->vm_page_prot =
+			pgprot_noncached(vm_get_page_prot(vma->vm_flags));
+		break;
+	default:
+		break;
+	}
+
+	if (i915_gem_object_is_lmem(mmo->obj))
+		vma->vm_ops = &i915_gem_lmem_vm_ops;
+	else
+		vma->vm_ops = &i915_gem_cpu_vm_ops;
+}
+
 /* This overcomes the limitation in drm_gem_mmap's assignment of a
  * drm_gem_object as the vma->vm_private_data. Since we need to
  * be able to resolve multiple mmap offsets which could be tied
@@ -671,7 +790,16 @@ int i915_gem_mmap(struct file *filp, struct vm_area_struct *vma)
 	vma->vm_page_prot = pgprot_decrypted(vma->vm_page_prot);
 	vma->vm_private_data = mmo;
 
-	vma->vm_ops = &i915_gem_gtt_vm_ops;
+	switch (mmo->mmap_type) {
+	case I915_MMAP_TYPE_OFFSET_WC:
+	case I915_MMAP_TYPE_OFFSET_WB:
+	case I915_MMAP_TYPE_OFFSET_UC:
+		set_vmdata_mmap_offset(mmo, vma);
+		break;
+	case I915_MMAP_TYPE_GTT:
+		vma->vm_ops = &i915_gem_gtt_vm_ops;
+		break;
+	}
 
 	return 0;
 }

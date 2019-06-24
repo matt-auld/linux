@@ -155,6 +155,53 @@ out_unpin:
 	return ret;
 }
 
+vm_fault_t i915_gem_fault_lmem(struct vm_fault *vmf)
+{
+	struct vm_area_struct *area = vmf->vma;
+	struct i915_mmap_offset *priv = area->vm_private_data;
+	struct drm_i915_gem_object *obj = priv->obj;
+	struct drm_device *dev = obj->base.dev;
+	struct drm_i915_private *i915 = to_i915(dev);
+	unsigned long size = area->vm_end - area->vm_start;
+	bool write = area->vm_flags & VM_WRITE;
+	vm_fault_t vmf_ret;
+	int i, ret;
+
+	/* Sanity check that we allow writing into this object */
+	if (i915_gem_object_is_readonly(obj) && write)
+		return VM_FAULT_SIGBUS;
+
+	for (i = 0; i < size >> PAGE_SHIFT; i++) {
+		vmf_ret = vmf_insert_pfn(area,
+					 (unsigned long)area->vm_start + i * PAGE_SIZE,
+					 i915_gem_object_lmem_io_offset(obj, i) >> PAGE_SHIFT);
+		if (vmf_ret & VM_FAULT_ERROR) {
+			ret = vm_fault_to_errno(vmf_ret, 0);
+			goto err;
+		}
+	}
+err:
+	switch (ret) {
+	case -EIO:
+		if (!i915_terminally_wedged(i915))
+			return VM_FAULT_SIGBUS;
+	case -EAGAIN:
+	case 0:
+	case -ERESTARTSYS:
+	case -EINTR:
+	case -EBUSY:
+		return VM_FAULT_NOPAGE;
+	case -ENOMEM:
+		return VM_FAULT_OOM;
+	case -ENOSPC:
+	case -EFAULT:
+		return VM_FAULT_SIGBUS;
+	default:
+		WARN_ONCE(ret, "unhandled error in %s: %i\n", __func__, ret);
+		return VM_FAULT_SIGBUS;
+	}
+}
+
 static const struct drm_i915_gem_object_ops region_lmem_obj_ops = {
 	.get_pages = i915_memory_region_get_pages_buddy,
 	.put_pages = i915_memory_region_put_pages_buddy,

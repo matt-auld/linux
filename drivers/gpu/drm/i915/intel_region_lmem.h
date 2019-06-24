@@ -17,6 +17,8 @@ resource_size_t i915_gem_object_lmem_io_offset(struct drm_i915_gem_object *obj,
 
 bool i915_gem_object_is_lmem(struct drm_i915_gem_object *obj);
 
+vm_fault_t i915_gem_fault_lmem(struct vm_fault *vmf);
+
 struct drm_i915_gem_object *
 i915_gem_object_create_lmem(struct drm_i915_private *i915,
 			    resource_size_t size,
