@@ -10,6 +10,7 @@
 #include "mock_gem_device.h"
 #include "gem/selftests/mock_context.h"
 #include "selftests/igt_flush_test.h"
+#include "selftests/i915_random.h"
 #include "mock_drm.h"
 
 #include "gem/i915_gem_object_blt.h"
@@ -347,6 +348,128 @@ err_put:
 	return err;
 }
 
+static int igt_gpu_write_dw(struct i915_vma *vma,
+			    struct i915_gem_context *ctx,
+			    struct intel_engine_cs *engine,
+			    u32 dword,
+			    u32 value)
+{
+	int err;
+
+	i915_gem_object_lock(vma->obj);
+	err = i915_gem_object_set_to_gtt_domain(vma->obj, true);
+	i915_gem_object_unlock(vma->obj);
+	if (err)
+		return err;
+
+	return igt_gpu_fill_dw(vma, ctx, engine, dword * sizeof(u32),
+			       vma->size >> PAGE_SHIFT, value);
+}
+
+static int igt_cpu_check(struct drm_i915_gem_object *obj, u32 dword, u32 val)
+{
+	unsigned long n;
+	int err;
+
+	i915_gem_object_lock(obj);
+	err = i915_gem_object_set_to_wc_domain(obj, false);
+	i915_gem_object_unlock(obj);
+	if (err)
+		return err;
+
+	err = i915_gem_object_pin_pages(obj);
+	if (err)
+		return err;
+
+	for (n = 0; n < obj->base.size >> PAGE_SHIFT; ++n) {
+		u32 __iomem *base;
+		u32 read_val;
+
+		base = i915_gem_object_lmem_io_map_page(obj, n);
+
+		read_val = ioread32(base + dword);
+		io_mapping_unmap_atomic(base);
+		if (read_val != val) {
+			pr_err("n=%lu base[%u]=%u, val=%u\n",
+			       n, dword, read_val, val);
+			err = -EINVAL;
+			break;
+		}
+	}
+
+	i915_gem_object_unpin_pages(obj);
+	return err;
+}
+
+static int igt_gpu_write(struct i915_gem_context *ctx,
+			 struct drm_i915_gem_object *obj)
+{
+	struct drm_i915_private *i915 = ctx->i915;
+	struct i915_address_space *vm = ctx->vm ?: &i915->ggtt.vm;
+	static struct intel_engine_cs *engines[I915_NUM_ENGINES];
+	struct intel_engine_cs *engine;
+	IGT_TIMEOUT(end_time);
+	I915_RND_STATE(prng);
+	struct i915_vma *vma;
+	unsigned int id;
+	int *order;
+	int i, n;
+	int err;
+
+	n = 0;
+	for_each_engine(engine, i915, id) {
+		if (!intel_engine_can_store_dword(engine)) {
+			pr_info("store-dword-imm not supported on engine=%u\n",
+				id);
+			continue;
+		}
+		engines[n++] = engine;
+	}
+
+	if (!n)
+		return 0;
+
+	order = i915_random_order(n * I915_NUM_ENGINES, &prng);
+	if (!order)
+		return -ENOMEM;
+
+	vma = i915_vma_instance(obj, vm, NULL);
+	if (IS_ERR(vma)) {
+		err = PTR_ERR(vma);
+		goto out_free;
+	}
+
+	err = i915_vma_pin(vma, 0, 0, PIN_USER);
+	if (err)
+		goto out_free;
+
+	i = 0;
+	do {
+		u32 rng = prandom_u32_state(&prng);
+		u32 dword = offset_in_page(rng) / 4;
+
+		engine = engines[order[i] % n];
+		i = (i + 1) % (n * I915_NUM_ENGINES);
+
+		err = igt_gpu_write_dw(vma, ctx, engine, dword, rng);
+		if (err)
+			break;
+
+		err = igt_cpu_check(obj, dword, rng);
+		if (err)
+			break;
+	} while (!__igt_timeout(end_time, NULL));
+
+	i915_vma_unpin(vma);
+out_free:
+	kfree(order);
+
+	if (err == -ENOMEM)
+		err = 0;
+
+	return err;
+}
+
 static int igt_lmem_create(void *arg)
 {
 	struct drm_i915_private *i915 = arg;
@@ -364,6 +487,43 @@ static int igt_lmem_create(void *arg)
 	i915_gem_object_unpin_pages(obj);
 out_put:
 	i915_gem_object_put(obj);
+
+	return err;
+}
+
+static int igt_lmem_write_gpu(void *arg)
+{
+	struct drm_i915_private *i915 = arg;
+	struct drm_i915_gem_object *obj;
+	I915_RND_STATE(prng);
+	u32 sz;
+	int err;
+
+	/*
+	 * XXX: Nothing too big for now; we don't want to upset CI. What we
+	 * really want is the huge dma stuff for device memory, then we can go
+	 * to town...
+	 */
+	sz = round_up(prandom_u32_state(&prng) % SZ_32M, PAGE_SIZE);
+
+	obj = i915_gem_object_create_lmem(i915, sz, 0);
+	if (IS_ERR(obj))
+		return PTR_ERR(obj);
+
+	err = i915_gem_object_pin_pages(obj);
+	if (err)
+		goto out_put;
+
+	err = igt_gpu_write(i915->kernel_context, obj);
+	if (err)
+		pr_err("igt_gpu_write failed(%d)\n", err);
+
+	i915_gem_object_unpin_pages(obj);
+out_put:
+	i915_gem_object_put(obj);
+
+	if (igt_flush_test(i915, I915_WAIT_LOCKED))
+		err = -EIO;
 
 	return err;
 }
@@ -483,6 +643,7 @@ int intel_memory_region_live_selftests(struct drm_i915_private *i915)
 	static const struct i915_subtest tests[] = {
 		SUBTEST(igt_lmem_create),
 		SUBTEST(igt_lmem_write_cpu),
+		SUBTEST(igt_lmem_write_gpu),
 	};
 	int err;
 
