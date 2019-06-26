@@ -139,7 +139,7 @@ void i915_gem_object_writeback(struct drm_i915_gem_object *obj)
 		obj->ops->writeback(obj);
 }
 
-static void __i915_gem_object_reset_page_iter(struct drm_i915_gem_object *obj)
+void __i915_gem_object_reset_page_iter(struct drm_i915_gem_object *obj)
 {
 	struct radix_tree_iter iter;
 	void __rcu **slot;

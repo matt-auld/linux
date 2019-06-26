@@ -40,7 +40,15 @@ int i915_gem_object_attach_phys(struct drm_i915_gem_object *obj, int align);
 void i915_gem_close_object(struct drm_gem_object *gem, struct drm_file *file);
 void i915_gem_free_object(struct drm_gem_object *obj);
 
+enum intel_region_id;
+int i915_gem_object_prepare_move(struct drm_i915_gem_object *obj);
+int i915_gem_object_migrate(struct drm_i915_gem_object *obj,
+			    struct intel_context *ce,
+			    enum intel_region_id id);
+
 void i915_gem_flush_free_objects(struct drm_i915_private *i915);
+
+void __i915_gem_object_reset_page_iter(struct drm_i915_gem_object *obj);
 
 struct sg_table *
 __i915_gem_object_unset_pages(struct drm_i915_gem_object *obj);
