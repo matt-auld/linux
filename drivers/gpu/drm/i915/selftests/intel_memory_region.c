@@ -500,6 +500,59 @@ out_put:
 	return err;
 }
 
+static int igt_smem_create_migrate(void *arg)
+{
+	struct drm_i915_private *i915 = arg;
+	struct intel_context *ce = i915->engine[BCS0]->kernel_context;
+	struct drm_i915_gem_object *obj;
+	int err;
+
+	/* Switch object backing-store on create */
+	obj = i915_gem_object_create_lmem(i915, PAGE_SIZE, 0);
+	if (IS_ERR(obj))
+		return PTR_ERR(obj);
+
+	err = i915_gem_object_migrate(obj, ce, INTEL_MEMORY_SMEM);
+	if (err)
+		goto out_put;
+
+	err = i915_gem_object_pin_pages(obj);
+	if (err)
+		goto out_put;
+
+	i915_gem_object_unpin_pages(obj);
+out_put:
+	i915_gem_object_put(obj);
+
+	return err;
+}
+
+static int igt_lmem_create_migrate(void *arg)
+{
+	struct drm_i915_private *i915 = arg;
+	struct intel_context *ce = i915->engine[BCS0]->kernel_context;
+	struct drm_i915_gem_object *obj;
+	int err;
+
+	/* Switch object backing-store on create */
+	obj = i915_gem_object_create_shmem(i915, PAGE_SIZE);
+	if (IS_ERR(obj))
+		return PTR_ERR(obj);
+
+	err = i915_gem_object_migrate(obj, ce, INTEL_MEMORY_LMEM);
+	if (err)
+		goto out_put;
+
+	err = i915_gem_object_pin_pages(obj);
+	if (err)
+		goto out_put;
+
+	i915_gem_object_unpin_pages(obj);
+out_put:
+	i915_gem_object_put(obj);
+
+	return err;
+}
 static int igt_lmem_write_gpu(void *arg)
 {
 	struct drm_i915_private *i915 = arg;
@@ -626,6 +679,79 @@ out_put:
 	return err;
 }
 
+static int igt_lmem_pages_migrate(void *arg)
+{
+	struct drm_i915_private *i915 = arg;
+	struct intel_context *ce = i915->engine[BCS0]->kernel_context;
+	struct drm_i915_gem_object *obj;
+	IGT_TIMEOUT(end_time);
+	I915_RND_STATE(prng);
+	u32 sz;
+	int err;
+
+	sz = round_up(prandom_u32_state(&prng) % SZ_32M, PAGE_SIZE);
+
+	obj = i915_gem_object_create_lmem(i915, sz, 0);
+	if (IS_ERR(obj))
+		return PTR_ERR(obj);
+
+	err = i915_gem_object_fill_blt(obj, ce, 0);
+	if (err)
+		goto out_put;
+
+	do {
+		err = i915_gem_object_prepare_move(obj);
+		if (err)
+			goto out_put;
+
+		if (i915_gem_object_is_lmem(obj)) {
+			err = i915_gem_object_migrate(obj, ce, INTEL_MEMORY_SMEM);
+			if (err)
+				goto out_put;
+
+			if (i915_gem_object_is_lmem(obj)) {
+				pr_err("object still backed by lmem\n");
+				err = -EINVAL;
+			}
+
+			if (!list_empty(&obj->mm.blocks)) {
+				pr_err("object leaking memory region\n");
+				err = -EINVAL;
+			}
+
+			if (!i915_gem_object_has_struct_page(obj)) {
+				pr_err("object not backed by struct page\n");
+				err = -EINVAL;
+			}
+
+		} else {
+			err = i915_gem_object_migrate(obj, ce, INTEL_MEMORY_LMEM);
+			if (err)
+				goto out_put;
+
+			if (i915_gem_object_has_struct_page(obj)) {
+				pr_err("object still backed by struct page\n");
+				err = -EINVAL;
+			}
+
+			if (!i915_gem_object_is_lmem(obj)) {
+				pr_err("object not backed by lmem\n");
+				err = -EINVAL;
+			}
+		}
+
+		if (!err)
+			err = i915_gem_object_fill_blt(obj, ce, 0xdeadbeaf);
+		if (err)
+			break;
+	} while (!__igt_timeout(end_time, NULL));
+
+out_put:
+	i915_gem_object_put(obj);
+
+	return err;
+}
+
 int intel_memory_region_mock_selftests(void)
 {
 	static const struct i915_subtest tests[] = {
@@ -669,6 +795,9 @@ int intel_memory_region_live_selftests(struct drm_i915_private *i915)
 		SUBTEST(igt_lmem_create),
 		SUBTEST(igt_lmem_write_cpu),
 		SUBTEST(igt_lmem_write_gpu),
+		SUBTEST(igt_smem_create_migrate),
+		SUBTEST(igt_lmem_create_migrate),
+		SUBTEST(igt_lmem_pages_migrate),
 	};
 	int err;
 
