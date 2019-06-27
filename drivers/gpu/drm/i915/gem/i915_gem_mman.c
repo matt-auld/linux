@@ -221,7 +221,8 @@ vm_fault_t i915_gem_fault(struct vm_fault *vmf)
 {
 #define MIN_CHUNK_PAGES (SZ_1M >> PAGE_SHIFT)
 	struct vm_area_struct *area = vmf->vma;
-	struct drm_i915_gem_object *obj = to_intel_bo(area->vm_private_data);
+	struct i915_mmap_offset *priv = area->vm_private_data;
+	struct drm_i915_gem_object *obj = priv->obj;
 	struct drm_device *dev = obj->base.dev;
 	struct drm_i915_private *i915 = to_i915(dev);
 	struct intel_runtime_pm *rpm = &i915->runtime_pm;
@@ -373,13 +374,15 @@ err:
 void __i915_gem_object_release_mmap(struct drm_i915_gem_object *obj)
 {
 	struct i915_vma *vma;
+	struct i915_mmap_offset *mmo;
 
 	GEM_BUG_ON(!obj->userfault_count);
 
 	obj->userfault_count = 0;
 	list_del(&obj->userfault_link);
-	drm_vma_node_unmap(&obj->base.vma_node,
-			   obj->base.dev->anon_inode->i_mapping);
+	list_for_each_entry(mmo, &obj->mmap_offsets, offset)
+		drm_vma_node_unmap(&mmo->vma_node,
+				   obj->base.dev->anon_inode->i_mapping);
 
 	for_each_ggtt_vma(vma, obj)
 		i915_vma_unset_userfault(vma);
@@ -433,14 +436,31 @@ out:
 	intel_runtime_pm_put(&i915->runtime_pm, wakeref);
 }
 
-static int create_mmap_offset(struct drm_i915_gem_object *obj)
+static void init_mmap_offset(struct drm_i915_gem_object *obj,
+			     struct i915_mmap_offset *mmo)
+{
+	mutex_lock(&obj->mmo_lock);
+	kref_init(&mmo->ref);
+	list_add(&mmo->offset, &obj->mmap_offsets);
+	mutex_unlock(&obj->mmo_lock);
+}
+
+static int create_mmap_offset(struct drm_i915_gem_object *obj,
+			      struct i915_mmap_offset *mmo)
 {
 	struct drm_i915_private *i915 = to_i915(obj->base.dev);
+	struct drm_device *dev = obj->base.dev;
 	int err;
 
-	err = drm_gem_create_mmap_offset(&obj->base);
-	if (likely(!err))
+	drm_vma_node_reset(&mmo->vma_node);
+	if (mmo->file)
+		drm_vma_node_allow(&mmo->vma_node, mmo->file);
+	err = drm_vma_offset_add(dev->vma_offset_manager, &mmo->vma_node,
+				 obj->base.size / PAGE_SIZE);
+	if (likely(!err)) {
+		init_mmap_offset(obj, mmo);
 		return 0;
+	}
 
 	/* Attempt to reap some mmap space from dead objects */
 	do {
@@ -451,32 +471,49 @@ static int create_mmap_offset(struct drm_i915_gem_object *obj)
 			break;
 
 		i915_gem_drain_freed_objects(i915);
-		err = drm_gem_create_mmap_offset(&obj->base);
-		if (!err)
+		err = drm_vma_offset_add(dev->vma_offset_manager, &mmo->vma_node,
+					 obj->base.size / PAGE_SIZE);
+		if (!err) {
+			init_mmap_offset(obj, mmo);
 			break;
+		}
 
 	} while (flush_delayed_work(&i915->gem.retire_work));
 
 	return err;
 }
 
-int
-i915_gem_mmap_gtt(struct drm_file *file,
-		  struct drm_device *dev,
-		  u32 handle,
-		  u64 *offset)
+static int
+__assign_gem_object_mmap_data(struct drm_file *file,
+			      u32 handle,
+			      enum i915_mmap_type mmap_type,
+			      u64 *offset)
 {
 	struct drm_i915_gem_object *obj;
+	struct i915_mmap_offset *mmo;
 	int ret;
 
 	obj = i915_gem_object_lookup(file, handle);
 	if (!obj)
 		return -ENOENT;
 
-	ret = create_mmap_offset(obj);
-	if (ret == 0)
-		*offset = drm_vma_node_offset_addr(&obj->base.vma_node);
+	mmo = kzalloc(sizeof(*mmo), GFP_KERNEL);
+	if (!mmo) {
+		ret = -ENOMEM;
+		goto err;
+	}
 
+	mmo->file = file;
+	ret = create_mmap_offset(obj, mmo);
+	if (ret) {
+		kfree(mmo);
+		goto err;
+	}
+
+	mmo->mmap_type = mmap_type;
+	mmo->obj = obj;
+	*offset = drm_vma_node_offset_addr(&mmo->vma_node);
+err:
 	i915_gem_object_put(obj);
 	return ret;
 }
@@ -500,9 +537,119 @@ int
 i915_gem_mmap_gtt_ioctl(struct drm_device *dev, void *data,
 			struct drm_file *file)
 {
-	struct drm_i915_gem_mmap_gtt *args = data;
+	struct drm_i915_gem_mmap_offset *args = data;
 
-	return i915_gem_mmap_gtt(file, dev, args->handle, &args->offset);
+	return __assign_gem_object_mmap_data(file, args->handle,
+					     I915_MMAP_TYPE_GTT,
+					     &args->offset);
+}
+
+void i915_mmap_offset_object_release(struct kref *ref)
+{
+	struct i915_mmap_offset *mmo = container_of(ref,
+						    struct i915_mmap_offset,
+						    ref);
+	struct drm_i915_gem_object *obj = mmo->obj;
+	struct drm_device *dev = obj->base.dev;
+
+	if (mmo->file)
+		drm_vma_node_revoke(&mmo->vma_node, mmo->file);
+	drm_vma_offset_remove(dev->vma_offset_manager, &mmo->vma_node);
+	list_del(&mmo->offset);
+
+	kfree(mmo);
+}
+
+static void i915_gem_vm_open(struct vm_area_struct *vma)
+{
+	struct i915_mmap_offset *priv = vma->vm_private_data;
+	struct drm_i915_gem_object *obj = priv->obj;
+
+	i915_gem_object_get(obj);
+	kref_get(&priv->ref);
+}
+
+static void i915_gem_vm_close(struct vm_area_struct *vma)
+{
+	struct i915_mmap_offset *priv = vma->vm_private_data;
+	struct drm_i915_gem_object *obj = priv->obj;
+
+	i915_gem_object_put(obj);
+	kref_put(&priv->ref, i915_mmap_offset_object_release);
+}
+
+static const struct vm_operations_struct i915_gem_gtt_vm_ops = {
+	.fault = i915_gem_fault,
+	.open = i915_gem_vm_open,
+	.close = i915_gem_vm_close,
+};
+
+/* This overcomes the limitation in drm_gem_mmap's assignment of a
+ * drm_gem_object as the vma->vm_private_data. Since we need to
+ * be able to resolve multiple mmap offsets which could be tied
+ * to a single gem object.
+ */
+int i915_gem_mmap(struct file *filp, struct vm_area_struct *vma)
+{
+	struct drm_vma_offset_node *node;
+	struct drm_file *priv = filp->private_data;
+	struct drm_device *dev = priv->minor->dev;
+	struct i915_mmap_offset *mmo = NULL;
+	struct drm_gem_object *obj = NULL;
+
+	if (drm_dev_is_unplugged(dev))
+		return -ENODEV;
+
+	drm_vma_offset_lock_lookup(dev->vma_offset_manager);
+	node = drm_vma_offset_exact_lookup_locked(dev->vma_offset_manager,
+						  vma->vm_pgoff,
+						  vma_pages(vma));
+	if (likely(node)) {
+	        mmo = container_of(node, struct i915_mmap_offset,
+				   vma_node);
+		/*
+		 * Take a ref for our mmap_offset and gem objects. The reference is cleaned
+		 * up when the vma is closed.
+		 *
+		 * Skip 0-refcnted objects as it is in the process of being destroyed
+		 * and will be invalid when the vma manager lock is released.
+		 */
+		if (kref_get_unless_zero(&mmo->ref)) {
+			obj = &mmo->obj->base;
+			if (!kref_get_unless_zero(&obj->refcount))
+				obj = NULL;
+		}
+	}
+	drm_vma_offset_unlock_lookup(dev->vma_offset_manager);
+
+	if (!obj) {
+		if (mmo)
+			kref_put(&mmo->ref, i915_mmap_offset_object_release);
+		return -EINVAL;
+	}
+
+	if (!drm_vma_node_is_allowed(node, priv)) {
+		drm_gem_object_put_unlocked(obj);
+		return -EACCES;
+	}
+
+	if (to_intel_bo(obj)->readonly) {
+		if (vma->vm_flags & VM_WRITE) {
+			drm_gem_object_put_unlocked(obj);
+			return -EINVAL;
+		}
+
+		vma->vm_flags &= ~VM_MAYWRITE;
+	}
+
+	vma->vm_flags |= VM_PFNMAP | VM_DONTEXPAND | VM_DONTDUMP;
+	vma->vm_page_prot = pgprot_writecombine(vm_get_page_prot(vma->vm_flags));
+	vma->vm_page_prot = pgprot_decrypted(vma->vm_page_prot);
+	vma->vm_private_data = mmo;
+
+	vma->vm_ops = &i915_gem_gtt_vm_ops;
+
+	return 0;
 }
 
 #if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)

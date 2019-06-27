@@ -628,6 +628,7 @@ static void revoke_mmaps(struct intel_gt *gt)
 
 	for (i = 0; i < gt->ggtt->num_fences; i++) {
 		struct drm_vma_offset_node *node;
+		struct i915_mmap_offset *mmo;
 		struct i915_vma *vma;
 		u64 vma_offset;
 
@@ -641,10 +642,20 @@ static void revoke_mmaps(struct intel_gt *gt)
 		GEM_BUG_ON(vma->fence != &gt->ggtt->fence_regs[i]);
 		node = &vma->obj->base.vma_node;
 		vma_offset = vma->ggtt_view.partial.offset << PAGE_SHIFT;
-		unmap_mapping_range(gt->i915->drm.anon_inode->i_mapping,
+
+		mutex_lock(&vma->obj->mmo_lock);
+		list_for_each_entry(mmo, &vma->obj->mmap_offsets, offset) {
+			node = &mmo->vma_node;
+			if (!drm_mm_node_allocated(&node->vm_node) ||
+			    mmo->mmap_type != I915_MMAP_TYPE_GTT)
+				continue;
+
+			unmap_mapping_range(gt->i915->drm.anon_inode->i_mapping,
 				    drm_vma_node_offset_addr(node) + vma_offset,
 				    vma->size,
 				    1);
+		}
+		mutex_unlock(&vma->obj->mmo_lock);
 	}
 }
 

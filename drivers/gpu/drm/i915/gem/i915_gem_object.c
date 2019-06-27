@@ -68,6 +68,9 @@ void i915_gem_object_init(struct drm_i915_gem_object *obj,
 
 	INIT_LIST_HEAD(&obj->lut_list);
 
+	mutex_init(&obj->mmo_lock);
+	INIT_LIST_HEAD(&obj->mmap_offsets);
+
 	init_rcu_head(&obj->rcu);
 
 	obj->ops = ops;
@@ -108,6 +111,7 @@ void i915_gem_close_object(struct drm_gem_object *gem, struct drm_file *file)
 	struct drm_i915_gem_object *obj = to_intel_bo(gem);
 	struct drm_i915_file_private *fpriv = file->driver_priv;
 	struct i915_lut_handle *lut, *ln;
+	struct i915_mmap_offset *mmo, *on;
 	LIST_HEAD(close);
 
 	i915_gem_object_lock(obj);
@@ -121,6 +125,11 @@ void i915_gem_close_object(struct drm_gem_object *gem, struct drm_file *file)
 		list_move(&lut->obj_link, &close);
 	}
 	i915_gem_object_unlock(obj);
+
+	mutex_lock(&obj->mmo_lock);
+	list_for_each_entry_safe(mmo, on, &obj->mmap_offsets, offset)
+		kref_put(&mmo->ref, i915_mmap_offset_object_release);
+	mutex_unlock(&obj->mmo_lock);
 
 	list_for_each_entry_safe(lut, ln, &close, obj_link) {
 		struct i915_gem_context *ctx = lut->ctx;
@@ -170,6 +179,7 @@ static void __i915_gem_free_objects(struct drm_i915_private *i915,
 	wakeref = intel_runtime_pm_get(&i915->runtime_pm);
 	llist_for_each_entry_safe(obj, on, freed, freed) {
 		struct i915_vma *vma, *vn;
+		struct i915_mmap_offset *mmo, *on;
 
 		trace_i915_gem_object_destroy(obj);
 
@@ -183,6 +193,7 @@ static void __i915_gem_free_objects(struct drm_i915_private *i915,
 		GEM_BUG_ON(!list_empty(&obj->vma.list));
 		GEM_BUG_ON(!RB_EMPTY_ROOT(&obj->vma.tree));
 
+		i915_gem_object_release_mmap(obj);
 		mutex_unlock(&i915->drm.struct_mutex);
 
 		GEM_BUG_ON(atomic_read(&obj->bind_count));
@@ -202,6 +213,11 @@ static void __i915_gem_free_objects(struct drm_i915_private *i915,
 
 		if (obj->ops->release)
 			obj->ops->release(obj);
+
+		mutex_lock(&obj->mmo_lock);
+		list_for_each_entry_safe(mmo, on, &obj->mmap_offsets, offset)
+			kref_put(&mmo->ref, i915_mmap_offset_object_release);
+		mutex_unlock(&obj->mmo_lock);
 
 		/* But keep the pointer alive for RCU-protected lookups */
 		call_rcu(&obj->rcu, __i915_gem_free_object_rcu);

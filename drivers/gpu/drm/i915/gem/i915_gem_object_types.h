@@ -62,6 +62,19 @@ struct drm_i915_gem_object_ops {
 	void (*release)(struct drm_i915_gem_object *obj);
 };
 
+enum i915_mmap_type {
+	I915_MMAP_TYPE_GTT = 0,
+};
+
+struct i915_mmap_offset {
+	struct drm_vma_offset_node vma_node;
+	struct drm_i915_gem_object* obj;
+	struct drm_file *file;
+	enum i915_mmap_type mmap_type;
+	struct kref ref;
+	struct list_head offset;
+};
+
 struct drm_i915_gem_object {
 	struct drm_gem_object base;
 
@@ -116,6 +129,11 @@ struct drm_i915_gem_object {
 	 */
 	unsigned int userfault_count;
 	struct list_head userfault_link;
+
+	/* Protects access to mmap offsets */
+	struct mutex mmo_lock;
+	struct list_head mmap_offsets;
+	bool readonly:1;
 
 	I915_SELFTEST_DECLARE(struct list_head st_link);
 

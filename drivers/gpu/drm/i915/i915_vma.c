@@ -865,7 +865,8 @@ static void __i915_vma_iounmap(struct i915_vma *vma)
 
 void i915_vma_revoke_mmap(struct i915_vma *vma)
 {
-	struct drm_vma_offset_node *node = &vma->obj->base.vma_node;
+	struct drm_vma_offset_node *node;
+	struct i915_mmap_offset *mmo;
 	u64 vma_offset;
 
 	lockdep_assert_held(&vma->vm->i915->drm.struct_mutex);
@@ -877,10 +878,20 @@ void i915_vma_revoke_mmap(struct i915_vma *vma)
 	GEM_BUG_ON(!vma->obj->userfault_count);
 
 	vma_offset = vma->ggtt_view.partial.offset << PAGE_SHIFT;
-	unmap_mapping_range(vma->vm->i915->drm.anon_inode->i_mapping,
-			    drm_vma_node_offset_addr(node) + vma_offset,
-			    vma->size,
-			    1);
+
+	mutex_lock(&vma->obj->mmo_lock);
+	list_for_each_entry(mmo, &vma->obj->mmap_offsets, offset) {
+		node = &mmo->vma_node;
+		if (!drm_mm_node_allocated(&node->vm_node) ||
+		    mmo->mmap_type != I915_MMAP_TYPE_GTT)
+			continue;
+
+		unmap_mapping_range(vma->vm->i915->drm.anon_inode->i_mapping,
+				    drm_vma_node_offset_addr(node) + vma_offset,
+				    vma->size,
+				    1);
+	}
+	mutex_unlock(&vma->obj->mmo_lock);
 
 	i915_vma_unset_userfault(vma);
 	if (!--vma->obj->userfault_count)

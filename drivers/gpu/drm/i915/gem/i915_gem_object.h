@@ -131,13 +131,13 @@ i915_gem_object_is_volatile(const struct drm_i915_gem_object *obj)
 static inline void
 i915_gem_object_set_readonly(struct drm_i915_gem_object *obj)
 {
-	obj->base.vma_node.readonly = true;
+	obj->readonly = true;
 }
 
 static inline bool
 i915_gem_object_is_readonly(const struct drm_i915_gem_object *obj)
 {
-	return obj->base.vma_node.readonly;
+	return obj->readonly;
 }
 
 static inline bool
@@ -435,6 +435,9 @@ int i915_gem_object_wait(struct drm_i915_gem_object *obj,
 int i915_gem_object_wait_priority(struct drm_i915_gem_object *obj,
 				  unsigned int flags,
 				  const struct i915_sched_attr *attr);
+
+void i915_mmap_offset_object_release(struct kref *ref);
+
 #define I915_PRIORITY_DISPLAY I915_USER_PRIORITY(I915_PRIORITY_MAX)
 
 #endif
