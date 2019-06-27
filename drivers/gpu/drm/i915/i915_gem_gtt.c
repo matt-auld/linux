@@ -2734,6 +2734,66 @@ int i915_init_ggtt(struct drm_i915_private *i915)
 	return 0;
 }
 
+void i915_gem_cleanup_memory_regions(struct drm_i915_private *i915)
+{
+	int i;
+
+	i915_gem_cleanup_stolen(i915);
+
+	for (i = 0; i < ARRAY_SIZE(i915->regions); ++i)	{
+		struct intel_memory_region *region = i915->regions[i];
+
+		if (region)
+			intel_memory_region_destroy(region);
+	}
+}
+
+int i915_gem_init_memory_regions(struct drm_i915_private *i915)
+{
+	int err, i;
+
+	/*
+	 * Initialise stolen early so that we may reserve preallocated
+	 * objects for the BIOS to KMS transition.
+	 */
+	/* XXX: stolen will become a region at some point */
+	err = i915_gem_init_stolen(i915);
+	if (err)
+		return err;
+
+	for (i = 0; i < INTEL_MEMORY_UKNOWN; i++) {
+		struct intel_memory_region *mem = NULL;
+		u32 type;
+
+		if (!HAS_REGION(i915, BIT(i)))
+			continue;
+
+		type = MEMORY_TYPE_FROM_REGION(intel_region_map[i]);
+		switch (type) {
+		default:
+			break;
+		}
+
+		if (IS_ERR(mem)) {
+			err = PTR_ERR(mem);
+			DRM_ERROR("Failed to setup region(%d) type=%d\n", err, type);
+			goto out_cleanup;
+		}
+
+		mem->id = intel_region_map[i];
+		mem->type = type;
+		mem->instance = MEMORY_INSTANCE_FROM_REGION(intel_region_map[i]);
+
+		i915->regions[i] = mem;
+	}
+
+	return 0;
+
+out_cleanup:
+	i915_gem_cleanup_memory_regions(i915);
+	return err;
+}
+
 static void ggtt_cleanup_hw(struct i915_ggtt *ggtt)
 {
 	struct drm_i915_private *i915 = ggtt->vm.i915;
@@ -2775,6 +2835,8 @@ void i915_ggtt_driver_release(struct drm_i915_private *i915)
 {
 	struct pagevec *pvec;
 
+	i915_gem_cleanup_memory_regions(i915);
+
 	fini_aliasing_ppgtt(&i915->ggtt);
 
 	ggtt_cleanup_hw(&i915->ggtt);
@@ -2784,8 +2846,6 @@ void i915_ggtt_driver_release(struct drm_i915_private *i915)
 		set_pages_array_wb(pvec->pages, pvec->nr);
 		__pagevec_release(pvec);
 	}
-
-	i915_gem_cleanup_stolen(i915);
 }
 
 static unsigned int gen6_get_total_gtt_size(u16 snb_gmch_ctl)
@@ -3225,11 +3285,7 @@ int i915_ggtt_init_hw(struct drm_i915_private *dev_priv)
 	if (ret)
 		return ret;
 
-	/*
-	 * Initialise stolen early so that we may reserve preallocated
-	 * objects for the BIOS to KMS transition.
-	 */
-	ret = i915_gem_init_stolen(dev_priv);
+	ret = i915_gem_init_memory_regions(dev_priv);
 	if (ret)
 		goto out_gtt_cleanup;
 

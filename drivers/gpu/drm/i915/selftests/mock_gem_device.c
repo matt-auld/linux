@@ -82,6 +82,8 @@ static void mock_device_release(struct drm_device *dev)
 
 	i915_gemfs_fini(i915);
 
+	i915_gem_cleanup_memory_regions(i915);
+
 	drm_mode_config_cleanup(&i915->drm);
 
 	drm_dev_fini(&i915->drm);
@@ -218,6 +220,10 @@ struct drm_i915_private *mock_gem_device(void)
 	mutex_unlock(&i915->drm.struct_mutex);
 
 	WARN_ON(i915_gemfs_init(i915));
+
+	err = i915_gem_init_memory_regions(i915);
+	if (err)
+		goto err_context;
 
 	return i915;
 
