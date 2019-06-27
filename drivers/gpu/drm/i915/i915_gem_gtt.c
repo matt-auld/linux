@@ -2770,7 +2770,8 @@ int i915_gem_init_memory_regions(struct drm_i915_private *i915)
 
 		type = MEMORY_TYPE_FROM_REGION(intel_region_map[i]);
 		switch (type) {
-		default:
+		case INTEL_SMEM:
+			mem = i915_gem_shmem_setup(i915);
 			break;
 		}
 

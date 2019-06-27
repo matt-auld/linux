@@ -6,6 +6,7 @@
 #include "intel_memory_region.h"
 #include "i915_gem_region.h"
 #include "i915_drv.h"
+#include "i915_trace.h"
 
 void
 i915_gem_object_put_pages_buddy(struct drm_i915_gem_object *obj,
@@ -142,11 +143,22 @@ i915_gem_object_create_region(struct intel_memory_region *mem,
 	GEM_BUG_ON(!size);
 	GEM_BUG_ON(!IS_ALIGNED(size, I915_GTT_MIN_ALIGNMENT));
 
+	/*
+	 * There is a prevalence of the assumption that we fit the object's
+	 * page count inside a 32bit _signed_ variable. Let's document this and
+	 * catch if we ever need to fix it. In the meantime, if you do spot
+	 * such a local variable, please consider fixing!
+	 */
+
 	if (size >> PAGE_SHIFT > INT_MAX)
 		return ERR_PTR(-E2BIG);
 
 	if (overflows_type(size, obj->base.size))
 		return ERR_PTR(-E2BIG);
 
-	return mem->ops->create_object(mem, size, flags);
+	obj = mem->ops->create_object(mem, size, flags);
+	if (!IS_ERR(obj))
+		trace_i915_gem_object_create(obj);
+
+	return obj;
 }

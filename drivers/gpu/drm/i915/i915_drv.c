@@ -512,9 +512,7 @@ static int i915_driver_early_probe(struct drm_i915_private *dev_priv)
 
 	intel_gt_init_early(&dev_priv->gt, dev_priv);
 
-	ret = i915_gem_init_early(dev_priv);
-	if (ret < 0)
-		goto err_workqueues;
+	i915_gem_init_early(dev_priv);
 
 	/* This must be called before any calls to HAS_PCH_* */
 	intel_detect_pch(dev_priv);
@@ -536,7 +534,6 @@ static int i915_driver_early_probe(struct drm_i915_private *dev_priv)
 
 err_gem:
 	i915_gem_cleanup_early(dev_priv);
-err_workqueues:
 	intel_gt_driver_late_release(&dev_priv->gt);
 	i915_workqueues_cleanup(dev_priv);
 	return ret;
