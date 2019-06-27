@@ -157,7 +157,7 @@ i915_gem_object_create_region(struct intel_memory_region *mem,
 		return ERR_PTR(-E2BIG);
 
 	obj = mem->ops->create_object(mem, size, flags);
-	if (!IS_ERR(obj))
+	if (!IS_ERR_OR_NULL(obj))
 		trace_i915_gem_object_create(obj);
 
 	return obj;

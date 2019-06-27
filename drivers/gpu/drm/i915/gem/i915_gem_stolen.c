@@ -10,6 +10,7 @@
 #include <drm/drm_mm.h>
 #include <drm/i915_drm.h>
 
+#include "gem/i915_gem_region.h"
 #include "i915_drv.h"
 #include "i915_gem_stolen.h"
 
@@ -150,7 +151,7 @@ static int i915_adjust_stolen(struct drm_i915_private *dev_priv,
 	return 0;
 }
 
-void i915_gem_cleanup_stolen(struct drm_i915_private *dev_priv)
+static void i915_gem_cleanup_stolen(struct drm_i915_private *dev_priv)
 {
 	if (!drm_mm_initialized(&dev_priv->mm.stolen))
 		return;
@@ -355,7 +356,7 @@ static void icl_get_stolen_reserved(struct drm_i915_private *i915,
 	}
 }
 
-int i915_gem_init_stolen(struct drm_i915_private *dev_priv)
+static int i915_gem_init_stolen(struct drm_i915_private *dev_priv)
 {
 	resource_size_t reserved_base, stolen_top;
 	resource_size_t reserved_total, reserved_size;
@@ -532,6 +533,9 @@ i915_gem_object_release_stolen(struct drm_i915_gem_object *obj)
 
 	i915_gem_stolen_remove_node(dev_priv, stolen);
 	kfree(stolen);
+
+	if (obj->mm.region)
+		i915_gem_object_release_memory_region(obj);
 }
 
 static const struct drm_i915_gem_object_ops i915_gem_object_stolen_ops = {
@@ -541,8 +545,9 @@ static const struct drm_i915_gem_object_ops i915_gem_object_stolen_ops = {
 };
 
 static struct drm_i915_gem_object *
-_i915_gem_object_create_stolen(struct drm_i915_private *dev_priv,
-			       struct drm_mm_node *stolen)
+__i915_gem_object_create_stolen(struct drm_i915_private *dev_priv,
+				struct drm_mm_node *stolen,
+				struct intel_memory_region *mem)
 {
 	struct drm_i915_gem_object *obj;
 	unsigned int cache_level;
@@ -559,6 +564,9 @@ _i915_gem_object_create_stolen(struct drm_i915_private *dev_priv,
 	cache_level = HAS_LLC(dev_priv) ? I915_CACHE_LLC : I915_CACHE_NONE;
 	i915_gem_object_set_cache_coherency(obj, cache_level);
 
+	if (mem)
+		i915_gem_object_init_memory_region(obj, mem, 0);
+
 	if (i915_gem_object_pin_pages(obj))
 		goto cleanup;
 
@@ -569,10 +577,12 @@ cleanup:
 	return NULL;
 }
 
-struct drm_i915_gem_object *
-i915_gem_object_create_stolen(struct drm_i915_private *dev_priv,
-			      resource_size_t size)
+static struct drm_i915_gem_object *
+_i915_gem_object_create_stolen(struct intel_memory_region *mem,
+			       resource_size_t size,
+			       unsigned int flags)
 {
+	struct drm_i915_private *dev_priv = mem->i915;
 	struct drm_i915_gem_object *obj;
 	struct drm_mm_node *stolen;
 	int ret;
@@ -593,13 +603,56 @@ i915_gem_object_create_stolen(struct drm_i915_private *dev_priv,
 		return NULL;
 	}
 
-	obj = _i915_gem_object_create_stolen(dev_priv, stolen);
+	obj = __i915_gem_object_create_stolen(dev_priv, stolen, mem);
 	if (obj)
 		return obj;
 
 	i915_gem_stolen_remove_node(dev_priv, stolen);
 	kfree(stolen);
 	return NULL;
+}
+
+struct drm_i915_gem_object *
+i915_gem_object_create_stolen(struct drm_i915_private *dev_priv,
+			      resource_size_t size)
+{
+	struct drm_i915_gem_object *obj;
+
+	obj = i915_gem_object_create_region(dev_priv->regions[INTEL_MEMORY_STOLEN],
+					    size, I915_BO_ALLOC_CONTIGUOUS);
+	if (IS_ERR(obj))
+		return NULL;
+
+	return obj;
+}
+
+static int init_stolen(struct intel_memory_region *mem)
+{
+	/*
+	 * Initialise stolen early so that we may reserve preallocated
+	 * objects for the BIOS to KMS transition.
+	 */
+	return i915_gem_init_stolen(mem->i915);
+}
+
+static void release_stolen(struct intel_memory_region *mem)
+{
+	i915_gem_cleanup_stolen(mem->i915);
+}
+
+static const struct intel_memory_region_ops i915_region_stolen_ops = {
+	.init = init_stolen,
+	.release = release_stolen,
+	.create_object = _i915_gem_object_create_stolen,
+};
+
+struct intel_memory_region *i915_gem_stolen_setup(struct drm_i915_private *i915)
+{
+	return intel_memory_region_create(i915,
+					  intel_graphics_stolen_res.start,
+					  resource_size(&intel_graphics_stolen_res),
+					  I915_GTT_PAGE_SIZE_4K, 0,
+					  &i915_region_stolen_ops);
 }
 
 struct drm_i915_gem_object *
@@ -643,7 +696,7 @@ i915_gem_object_create_stolen_for_preallocated(struct drm_i915_private *dev_priv
 		return NULL;
 	}
 
-	obj = _i915_gem_object_create_stolen(dev_priv, stolen);
+	obj = __i915_gem_object_create_stolen(dev_priv, stolen, NULL);
 	if (obj == NULL) {
 		DRM_DEBUG_DRIVER("failed to allocate stolen object\n");
 		i915_gem_stolen_remove_node(dev_priv, stolen);
