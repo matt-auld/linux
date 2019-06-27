@@ -13,8 +13,10 @@
 
 #include "gem/i915_gem_lmem.h"
 #include "gem/i915_gem_region.h"
+#include "gem/i915_gem_object_blt.h"
 #include "gem/selftests/mock_context.h"
 #include "gt/intel_gt.h"
+#include "selftests/igt_flush_test.h"
 
 static void close_objects(struct list_head *objects)
 {
@@ -373,6 +375,79 @@ out_put:
 	return err;
 }
 
+static int igt_lmem_write_cpu(void *arg)
+{
+	struct drm_i915_private *i915 = arg;
+	struct intel_context *ce = i915->engine[BCS0]->kernel_context;
+	struct drm_i915_gem_object *obj;
+	struct rnd_state prng;
+	u32 *vaddr;
+	u32 dword;
+	u32 val;
+	u32 sz;
+	int err;
+
+	if (!HAS_ENGINE(i915, BCS0))
+		return 0;
+
+	sz = round_up(prandom_u32_state(&prng) % SZ_32M, PAGE_SIZE);
+
+	obj = i915_gem_object_create_lmem(i915, sz, I915_BO_ALLOC_CONTIGUOUS);
+	if (IS_ERR(obj))
+		return PTR_ERR(obj);
+
+	vaddr = i915_gem_object_pin_map(obj, I915_MAP_WC);
+	if (IS_ERR(vaddr)) {
+		pr_err("Failed to iomap lmembar; err=%d\n", (int)PTR_ERR(vaddr));
+		err = PTR_ERR(vaddr);
+		goto out_put;
+	}
+
+	val = prandom_u32_state(&prng);
+
+	/* Write from gpu and then read from cpu */
+	err = i915_gem_object_fill_blt(obj, ce, val);
+	if (err)
+		goto out_unpin;
+
+	i915_gem_object_lock(obj);
+	err = i915_gem_object_set_to_wc_domain(obj, true);
+	i915_gem_object_unlock(obj);
+	if (err)
+		goto out_unpin;
+
+	for (dword = 0; dword < sz / sizeof(u32); ++dword) {
+		if (vaddr[dword] != val) {
+			pr_err("vaddr[%u]=%u, val=%u\n", dword, vaddr[dword],
+			        val);
+			err = -EINVAL;
+			break;
+		}
+	}
+
+	/* Write from the cpu and read again from the cpu */
+	memset32(vaddr, val ^ 0xdeadbeaf, sz / sizeof(u32));
+
+	for (dword = 0; dword < sz / sizeof(u32); ++dword) {
+		if (vaddr[dword] != (val ^ 0xdeadbeaf)) {
+			pr_err("vaddr[%u]=%u, val=%u\n", dword, vaddr[dword],
+			        val ^ 0xdeadbeaf);
+			err = -EINVAL;
+			break;
+		}
+	}
+
+out_unpin:
+	i915_gem_object_unpin_map(obj);
+out_put:
+	i915_gem_object_put(obj);
+
+	if (igt_flush_test(i915, I915_WAIT_LOCKED))
+		err = -EIO;
+
+	return err;
+}
+
 int intel_memory_region_mock_selftests(void)
 {
 	static const struct i915_subtest tests[] = {
@@ -414,6 +489,7 @@ int intel_memory_region_live_selftests(struct drm_i915_private *i915)
 {
 	static const struct i915_subtest tests[] = {
 		SUBTEST(igt_lmem_create),
+		SUBTEST(igt_lmem_write_cpu),
 	};
 	int err;
 

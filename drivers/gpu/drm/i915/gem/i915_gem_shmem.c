@@ -422,7 +422,8 @@ static void shmem_release(struct drm_i915_gem_object *obj)
 
 const struct drm_i915_gem_object_ops i915_gem_shmem_ops = {
 	.flags = I915_GEM_OBJECT_HAS_STRUCT_PAGE |
-		 I915_GEM_OBJECT_IS_SHRINKABLE,
+		 I915_GEM_OBJECT_IS_SHRINKABLE |
+		 I915_GEM_OBJECT_IS_MAPPABLE,
 
 	.get_pages = shmem_get_pages,
 	.put_pages = shmem_put_pages,
