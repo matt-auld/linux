@@ -17,6 +17,18 @@ const struct drm_i915_gem_object_ops i915_gem_lmem_obj_ops = {
 	.release = i915_gem_object_release_memory_region,
 };
 
+void __iomem *
+i915_gem_object_lmem_io_map_page_atomic(struct drm_i915_gem_object *obj,
+					unsigned long n)
+{
+	resource_size_t offset;
+
+	offset = i915_gem_object_get_dma_address(obj, n);
+	offset -= obj->mm.region->region.start;
+
+	return io_mapping_map_atomic_wc(&obj->mm.region->iomap, offset);
+}
+
 bool i915_gem_object_is_lmem(struct drm_i915_gem_object *obj)
 {
 	return obj->ops == &i915_gem_lmem_obj_ops;

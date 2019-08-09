@@ -14,6 +14,7 @@
 #include "display/intel_frontbuffer.h"
 
 #include "gem/i915_gem_ioctls.h"
+#include "gem/i915_gem_lmem.h"
 #include "gt/intel_context.h"
 #include "gt/intel_gt.h"
 #include "gt/intel_gt_buffer_pool.h"
@@ -278,6 +279,7 @@ struct i915_execbuffer {
 		bool has_llc : 1;
 		bool has_fence : 1;
 		bool needs_unfenced : 1;
+		bool is_lmem : 1;
 
 		struct i915_request *rq;
 		u32 *rq_cmd;
@@ -1049,6 +1051,7 @@ static void reloc_cache_init(struct reloc_cache *cache,
 	cache->has_fence = cache->gen < 4;
 	cache->needs_unfenced = INTEL_INFO(i915)->unfenced_needs_alignment;
 	cache->node.flags = 0;
+	cache->is_lmem = false;
 	reloc_cache_clear(cache);
 }
 
@@ -1128,10 +1131,14 @@ static void reloc_cache_reset(struct reloc_cache *cache, struct i915_execbuffer 
 	} else {
 		struct i915_ggtt *ggtt = cache_to_ggtt(cache);
 
-		intel_gt_flush_ggtt_writes(ggtt->vm.gt);
+		if (!cache->is_lmem)
+			intel_gt_flush_ggtt_writes(ggtt->vm.gt);
 		io_mapping_unmap_atomic((void __iomem *)vaddr);
 
-		if (drm_mm_node_allocated(&cache->node)) {
+		if (cache->is_lmem) {
+			i915_gem_object_unpin_pages((struct drm_i915_gem_object *)cache->node.mm);
+			cache->is_lmem = false;
+		} else if (drm_mm_node_allocated(&cache->node)) {
 			ggtt->vm.clear_range(&ggtt->vm,
 					     cache->node.start,
 					     cache->node.size);
@@ -1180,6 +1187,40 @@ static void *reloc_kmap(struct drm_i915_gem_object *obj,
 	vaddr = kmap_atomic(page);
 	cache->vaddr = unmask_flags(cache->vaddr) | (unsigned long)vaddr;
 	cache->page = pageno;
+
+	return vaddr;
+}
+
+static void *reloc_lmem(struct drm_i915_gem_object *obj,
+			struct reloc_cache *cache,
+			unsigned long page)
+{
+	void *vaddr;
+	int err;
+
+	GEM_BUG_ON(use_cpu_reloc(cache, obj));
+
+	if (cache->vaddr) {
+		io_mapping_unmap_atomic((void __force __iomem *) unmask_page(cache->vaddr));
+	} else {
+		err = i915_gem_object_pin_pages(obj);
+		if (err)
+			return ERR_PTR(err);
+
+		err = i915_gem_object_set_to_wc_domain(obj, true);
+		if (err) {
+			i915_gem_object_unpin_pages(obj);
+			return ERR_PTR(err);
+		}
+
+		cache->node.mm = (void *)obj;
+		cache->is_lmem = true;
+	}
+
+	vaddr = i915_gem_object_lmem_io_map_page_atomic(obj, page);
+
+	cache->vaddr = (unsigned long)vaddr;
+	cache->page = page;
 
 	return vaddr;
 }
@@ -1262,8 +1303,12 @@ static void *reloc_vaddr(struct drm_i915_gem_object *obj,
 		vaddr = unmask_page(cache->vaddr);
 	} else {
 		vaddr = NULL;
-		if ((cache->vaddr & KMAP) == 0)
-			vaddr = reloc_iomap(obj, eb, page);
+		if ((cache->vaddr & KMAP) == 0) {
+			if (i915_gem_object_is_lmem(obj))
+				vaddr = reloc_lmem(obj, cache, page);
+			else
+				vaddr = reloc_iomap(obj, eb, page);
+		}
 		if (!vaddr)
 			vaddr = reloc_kmap(obj, cache, page);
 	}
