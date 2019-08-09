@@ -64,6 +64,9 @@ static int
 insert_mappable_node(struct i915_ggtt *ggtt,
                      struct drm_mm_node *node, u32 size)
 {
+	if (!ggtt->mappable_end)
+		return -ENOSPC;
+
 	memset(node, 0, sizeof(*node));
 	return drm_mm_insert_node_in_range(&ggtt->vm.mm, node,
 					   size, 0, I915_COLOR_UNEVICTABLE,
