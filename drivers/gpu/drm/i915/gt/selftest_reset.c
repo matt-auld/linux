@@ -20,6 +20,7 @@ __igt_reset_stolen(struct intel_gt *gt,
 {
 	struct i915_ggtt *ggtt = &gt->i915->ggtt;
 	const struct resource *dsm = &gt->i915->dsm;
+	struct intel_memory_region *mem = i915_stolen_region(gt->i915);
 	resource_size_t num_pages, page;
 	struct intel_engine_cs *engine;
 	intel_wakeref_t wakeref;
@@ -92,7 +93,7 @@ __igt_reset_stolen(struct intel_gt *gt,
 				      ggtt->error_capture.start,
 				      PAGE_SIZE);
 
-		if (!__drm_mm_interval_first(&gt->i915->mm.stolen,
+		if (!__drm_mm_interval_first(&mem->stolen,
 					     page << PAGE_SHIFT,
 					     ((page + 1) << PAGE_SHIFT) - 1))
 			memset32(s, STACK_MAGIC, PAGE_SIZE / sizeof(u32));
@@ -139,7 +140,7 @@ __igt_reset_stolen(struct intel_gt *gt,
 		x = crc32_le(0, in, PAGE_SIZE);
 
 		if (x != crc[page] &&
-		    !__drm_mm_interval_first(&gt->i915->mm.stolen,
+		    !__drm_mm_interval_first(&mem->stolen,
 					     page << PAGE_SHIFT,
 					     ((page + 1) << PAGE_SHIFT) - 1)) {
 			pr_debug("unused stolen page %pa modified by GPU reset\n",
