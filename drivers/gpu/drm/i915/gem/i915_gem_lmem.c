@@ -111,8 +111,8 @@ out_put:
 	return ret;
 }
 
-static int i915_gem_object_lmem_pwrite(struct drm_i915_gem_object *obj,
-				       const struct drm_i915_gem_pwrite *arg)
+int i915_gem_object_lmem_pwrite(struct drm_i915_gem_object *obj,
+				const struct drm_i915_gem_pwrite *arg)
 {
 	struct drm_i915_private *i915 = to_i915(obj->base.dev);
 	struct intel_runtime_pm *rpm = &i915->runtime_pm;
