@@ -44,6 +44,7 @@
 #include "gem/i915_gem_clflush.h"
 #include "gem/i915_gem_context.h"
 #include "gem/i915_gem_ioctls.h"
+#include "gem/i915_gem_lmem.h"
 #include "gem/i915_gem_pm.h"
 #include "gt/intel_engine_user.h"
 #include "gt/intel_gt.h"
@@ -173,6 +174,7 @@ i915_gem_phys_pwrite(struct drm_i915_gem_object *obj,
 static int
 i915_gem_create(struct drm_file *file,
 		struct drm_i915_private *dev_priv,
+		enum intel_region_id mem_region,
 		u64 *size_p,
 		u32 *handle_p)
 {
@@ -186,7 +188,12 @@ i915_gem_create(struct drm_file *file,
 		return -EINVAL;
 
 	/* Allocate the new object */
-	obj = i915_gem_object_create_shmem(dev_priv, size);
+	if (mem_region == INTEL_REGION_LMEM)
+		obj = i915_gem_object_create_lmem(dev_priv, size, 0);
+	else if (mem_region == INTEL_REGION_STOLEN)
+		obj = i915_gem_object_create_stolen(dev_priv, size);
+	else
+		obj = i915_gem_object_create_shmem(dev_priv, size);
 	if (IS_ERR(obj))
 		return PTR_ERR(obj);
 
@@ -206,6 +213,7 @@ i915_gem_dumb_create(struct drm_file *file,
 		     struct drm_device *dev,
 		     struct drm_mode_create_dumb *args)
 {
+	enum intel_region_id mem_region = INTEL_REGION_UNKNOWN;
 	int cpp = DIV_ROUND_UP(args->bpp, 8);
 	u32 format;
 
@@ -232,7 +240,11 @@ i915_gem_dumb_create(struct drm_file *file,
 		args->pitch = ALIGN(args->pitch, 4096);
 
 	args->size = args->pitch * args->height;
-	return i915_gem_create(file, to_i915(dev),
+
+	if (HAS_LMEM(to_i915(dev)))
+		mem_region = INTEL_REGION_LMEM;
+
+	return i915_gem_create(file, to_i915(dev), mem_region,
 			       &args->size, &args->handle);
 }
 
@@ -251,7 +263,7 @@ i915_gem_create_ioctl(struct drm_device *dev, void *data,
 
 	i915_gem_flush_free_objects(dev_priv);
 
-	return i915_gem_create(file, dev_priv,
+	return i915_gem_create(file, dev_priv, INTEL_REGION_UNKNOWN,
 			       &args->size, &args->handle);
 }
 
