@@ -967,6 +967,8 @@ out_object_put:
 
 static int gpu_write(struct intel_context *ce,
 		     struct i915_vma *vma,
+		     u64 offset,
+		     u64 size,
 		     u32 dw,
 		     u32 val)
 {
@@ -978,11 +980,13 @@ static int gpu_write(struct intel_context *ce,
 	if (err)
 		return err;
 
-	return igt_gpu_fill_dw(ce, vma, dw * sizeof(u32),
-			       vma->size >> PAGE_SHIFT, val);
+	return igt_gpu_fill_dw(ce, vma, offset + dw * sizeof(u32),
+			       size >> PAGE_SHIFT, val);
 }
 
-static int __cpu_check_shmem(struct drm_i915_gem_object *obj, u32 dword, u32 val)
+static int __cpu_check_shmem(struct drm_i915_gem_object *obj,
+			     u64 offset, u64 size,
+			     u32 dword, u32 val)
 {
 	unsigned int needs_flush;
 	unsigned long n;
@@ -992,7 +996,7 @@ static int __cpu_check_shmem(struct drm_i915_gem_object *obj, u32 dword, u32 val
 	if (err)
 		return err;
 
-	for (n = 0; n < obj->base.size >> PAGE_SHIFT; ++n) {
+	for (n = offset >> PAGE_SHIFT; n < size >> PAGE_SHIFT; ++n) {
 		u32 *ptr = kmap_atomic(i915_gem_object_get_page(obj, n));
 
 		if (needs_flush & CLFLUSH_BEFORE)
@@ -1014,7 +1018,9 @@ static int __cpu_check_shmem(struct drm_i915_gem_object *obj, u32 dword, u32 val
 	return err;
 }
 
-static int __cpu_check_lmem(struct drm_i915_gem_object *obj, u32 dword, u32 val)
+static int __cpu_check_lmem(struct drm_i915_gem_object *obj,
+			    u64 offset, u64 size,
+			    u32 dword, u32 val)
 {
 	unsigned long n;
 	int err;
@@ -1029,7 +1035,7 @@ static int __cpu_check_lmem(struct drm_i915_gem_object *obj, u32 dword, u32 val)
 	if (err)
 		return err;
 
-	for (n = 0; n < obj->base.size >> PAGE_SHIFT; ++n) {
+	for (n = offset >> PAGE_SHIFT; n < size >> PAGE_SHIFT; ++n) {
 		u32 __iomem *base;
 		u32 read_val;
 
@@ -1049,18 +1055,21 @@ static int __cpu_check_lmem(struct drm_i915_gem_object *obj, u32 dword, u32 val)
 	return err;
 }
 
-static int cpu_check(struct drm_i915_gem_object *obj, u32 dword, u32 val)
+static int cpu_check(struct drm_i915_gem_object *obj,
+		     u64 offset, u64 size,
+		     u32 dword, u32 val)
 {
 	if (i915_gem_object_has_struct_page(obj))
-		return __cpu_check_shmem(obj, dword, val);
+		return __cpu_check_shmem(obj, offset, size, dword, val);
 	else if (i915_gem_object_is_lmem(obj))
-		return __cpu_check_lmem(obj, dword, val);
+		return __cpu_check_lmem(obj, offset, size, dword, val);
 
 	return -ENODEV;
 }
 
 static int __igt_write_huge(struct intel_context *ce,
 			    struct drm_i915_gem_object *obj,
+			    u64 gtt_size, u64 gtt_offset,
 			    u64 size, u64 offset,
 			    u32 dword, u32 val)
 {
@@ -1076,7 +1085,7 @@ static int __igt_write_huge(struct intel_context *ce,
 	if (err)
 		goto out_vma_close;
 
-	err = i915_vma_pin(vma, size, 0, flags | offset);
+	err = i915_vma_pin(vma, gtt_size, 0, flags | gtt_offset);
 	if (err) {
 		/*
 		 * The ggtt may have some pages reserved so
@@ -1092,15 +1101,15 @@ static int __igt_write_huge(struct intel_context *ce,
 	if (err)
 		goto out_vma_unpin;
 
-	err = gpu_write(ce, vma, dword, val);
+	err = gpu_write(ce, vma, offset, size, dword, val);
 	if (err) {
-		pr_err("gpu-write failed at offset=%llx\n", offset);
+		pr_err("gpu-write failed at offset=%llx\n", gtt_offset);
 		goto out_vma_unpin;
 	}
 
-	err = cpu_check(obj, dword, val);
+	err = cpu_check(obj, offset, size, dword, val);
 	if (err) {
-		pr_err("cpu-check failed at offset=%llx\n", offset);
+		pr_err("cpu-check failed at offset=%llx\n", gtt_offset);
 		goto out_vma_unpin;
 	}
 
@@ -1113,7 +1122,8 @@ out_vma_close:
 }
 
 static int igt_write_huge(struct i915_gem_context *ctx,
-			  struct drm_i915_gem_object *obj)
+			  struct drm_i915_gem_object *obj,
+			  bool smoke)
 {
 	struct i915_gem_engines *engines;
 	struct i915_gem_engines_iter it;
@@ -1159,52 +1169,91 @@ static int igt_write_huge(struct i915_gem_context *ctx,
 	if (!order)
 		return -ENOMEM;
 
-	max_page_size = rounddown_pow_of_two(obj->mm.page_sizes.sg);
-	max = div_u64(max - size, max_page_size);
-
-	/*
-	 * Try various offsets in an ascending/descending fashion until we
-	 * timeout -- we want to avoid issues hidden by effectively always using
-	 * offset = 0.
-	 */
-	i = 0;
 	engines = i915_gem_context_lock_engines(ctx);
-	for_each_prime_number_from(num, 0, max) {
-		u64 offset_low = num * max_page_size;
-		u64 offset_high = (max - num) * max_page_size;
-		u32 dword = offset_in_page(num) / 4;
-		struct intel_context *ce;
+	i = 0;
 
+	if (smoke) {
+		struct intel_context *ce;
+		u64 gtt_offset;
+		u64 sub_offset;
+		u64 sub_size;
+		u32 dword;
+		u32 align;
+retry:
 		ce = engines->engines[order[i] % engines->num_engines];
 		i = (i + 1) % (count * count);
 		if (!ce || !intel_engine_can_store_dword(ce->engine))
-			continue;
+			goto retry;
+
+		align = I915_GTT_MIN_ALIGNMENT;
+		if (obj->mm.page_sizes.sg & I915_GTT_PAGE_SIZE_64K)
+			align = I915_GTT_PAGE_SIZE_2M;
 
 		/*
-		 * In order to utilize 64K pages we need to both pad the vma
-		 * size and ensure the vma offset is at the start of the pt
-		 * boundary, however to improve coverage we opt for testing both
-		 * aligned and unaligned offsets.
+		 * Limit ourselves to a random 4M block within the object for
+		 * the gpu operation.
 		 */
-		if (obj->mm.page_sizes.sg & I915_GTT_PAGE_SIZE_64K)
-			offset_low = round_down(offset_low,
+		sub_size = min_t(u64, SZ_4M, obj->base.size);
+		sub_offset = igt_random_offset(&prng, 0, obj->base.size,
+					       sub_size, PAGE_SIZE);
+
+		gtt_offset = igt_random_offset(&prng, 0, ce->vm->total, size, align);
+		dword = prandom_u32_state(&prng) % (PAGE_SIZE / sizeof(u32));
+
+		err = __igt_write_huge(ce, obj,
+				       size, gtt_offset,
+				       sub_size, sub_offset,
+				       dword, dword);
+	} else {
+		max_page_size = rounddown_pow_of_two(obj->mm.page_sizes.sg);
+		max = div_u64(max - size, max_page_size);
+		/*
+		 * Try various offsets in an ascending/descending fashion until we
+		 * timeout -- we want to avoid issues hidden by effectively always using
+		 * offset = 0.
+		 */
+		for_each_prime_number_from(num, 0, max) {
+			u64 offset_low = num * max_page_size;
+			u64 offset_high = (max - num) * max_page_size;
+			u32 dword = offset_in_page(num) / 4;
+			struct intel_context *ce;
+
+			ce = engines->engines[order[i] % engines->num_engines];
+			i = (i + 1) % (count * count);
+			if (!ce || !intel_engine_can_store_dword(ce->engine))
+				continue;
+
+			/*
+			 * In order to utilize 64K pages we need to both pad the vma
+			 * size and ensure the vma offset is at the start of the pt
+			 * boundary, however to improve coverage we opt for testing both
+			 * aligned and unaligned offsets.
+			 */
+			if (obj->mm.page_sizes.sg & I915_GTT_PAGE_SIZE_64K)
+				offset_low = round_down(offset_low,
 						I915_GTT_PAGE_SIZE_2M);
 
-		err = __igt_write_huge(ce, obj, size, offset_low,
-				       dword, num + 1);
-		if (err)
-			break;
+			err = __igt_write_huge(ce, obj,
+					       size, offset_low,
+					       obj->base.size, 0,
+					       dword, num + 1);
+			if (err)
+				break;
 
-		err = __igt_write_huge(ce, obj, size, offset_high,
-				       dword, num + 1);
-		if (err)
-			break;
+			err = __igt_write_huge(ce, obj,
+					       size, offset_high,
+					       obj->base.size, 0,
+					       dword, num + 1);
+			if (err)
+				break;
 
-		if (igt_timeout(end_time,
-				"%s timed out on %s, offset_low=%llx offset_high=%llx, max_page_size=%x\n",
-				__func__, ce->engine->name, offset_low, offset_high,
-				max_page_size))
-			break;
+			if (igt_timeout(end_time,
+					"%s timed out on %s, offset_low=%llx offset_high=%llx, max_page_size=%x\n",
+					__func__, ce->engine->name,
+					offset_low, offset_high,
+					max_page_size))
+				break;
+		}
 	}
 	i915_gem_context_unlock_engines(ctx);
 
@@ -1236,6 +1285,8 @@ static int igt_ppgtt_exhaust_huge(void *arg)
 	n = 0;
 	for_each_set_bit(i, &supported, ilog2(I915_GTT_MAX_PAGE_SIZE) + 1)
 		pages[n++] = BIT(i);
+
+	/* XXX: extend this for backing storage backed by device memory */
 
 	for (size_mask = 2; size_mask < BIT(n); size_mask++) {
 		unsigned int size = 0;
@@ -1290,7 +1341,7 @@ static int igt_ppgtt_exhaust_huge(void *arg)
 			/* Force the page-size for the gtt insertion */
 			obj->mm.page_sizes.sg = page_sizes;
 
-			err = igt_write_huge(ctx, obj);
+			err = igt_write_huge(ctx, obj, false);
 			if (err) {
 				pr_err("exhaust write-huge failed with size=%u\n",
 				       size);
@@ -1365,7 +1416,7 @@ static int igt_ppgtt_internal_huge(void *arg)
 		goto out_unpin;
 	}
 
-	err = igt_write_huge(ctx, obj);
+	err = igt_write_huge(ctx, obj, true);
 	if (err)
 		pr_err("%s write-huge failed with size=%u\n", __func__, size);
 
@@ -1422,7 +1473,7 @@ static int igt_ppgtt_gemfs_huge(void *arg)
 		goto out_unpin;
 	}
 
-	err = igt_write_huge(ctx, obj);
+	err = igt_write_huge(ctx, obj, true);
 	if (err)
 		pr_err("%s write-huge failed with size=%u\n", __func__, size);
 
@@ -1489,7 +1540,7 @@ try_again:
 		goto out_unpin;
 	}
 
-	err = igt_write_huge(ctx, obj);
+	err = igt_write_huge(ctx, obj, true);
 	if (err)
 		pr_err("%s write-huge failed with size=%u\n", __func__, size);
 
@@ -1620,7 +1671,7 @@ static int igt_ppgtt_pin_update(void *arg)
 		if (!intel_engine_can_store_dword(ce->engine))
 			continue;
 
-		err = gpu_write(ce, vma, n++, 0xdeadbeaf);
+		err = gpu_write(ce, vma, 0, vma->size, n++, 0xdeadbeaf);
 		if (err)
 			break;
 	}
@@ -1629,7 +1680,7 @@ static int igt_ppgtt_pin_update(void *arg)
 		goto out_unpin;
 
 	while (n--) {
-		err = cpu_check(obj, n, 0xdeadbeaf);
+		err = cpu_check(obj, 0, obj->base.size, n, 0xdeadbeaf);
 		if (err)
 			goto out_unpin;
 	}
@@ -1759,7 +1810,7 @@ static int igt_shrink_thp(void *arg)
 		if (!intel_engine_can_store_dword(ce->engine))
 			continue;
 
-		err = gpu_write(ce, vma, n++, 0xdeadbeaf);
+		err = gpu_write(ce, vma, 0, vma->size, n++, 0xdeadbeaf);
 		if (err)
 			break;
 	}
@@ -1790,7 +1841,7 @@ static int igt_shrink_thp(void *arg)
 		goto out_close;
 
 	while (n--) {
-		err = cpu_check(obj, n, 0xdeadbeaf);
+		err = cpu_check(obj, 0, obj->base.size, n, 0xdeadbeaf);
 		if (err)
 			break;
 	}
