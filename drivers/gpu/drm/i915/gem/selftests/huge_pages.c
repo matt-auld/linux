@@ -1271,8 +1271,11 @@ static int igt_ppgtt_exhaust_huge(void *arg)
 	struct drm_i915_gem_object *obj;
 	unsigned int size_mask;
 	unsigned int page_mask;
+	unsigned int size;
+	unsigned int base;
+	IGT_TIMEOUT(end_time);
 	int n, i;
-	int err = -ENODEV;
+	int err;
 
 	if (supported == I915_GTT_PAGE_SIZE_4K)
 		return 0;
@@ -1288,8 +1291,10 @@ static int igt_ppgtt_exhaust_huge(void *arg)
 
 	/* XXX: extend this for backing storage backed by device memory */
 
+	base = 0;
+again:
 	for (size_mask = 2; size_mask < BIT(n); size_mask++) {
-		unsigned int size = 0;
+		size = base;
 
 		for (i = 0; i < n; i++) {
 			if (size_mask & BIT(i))
@@ -1316,53 +1321,60 @@ static int igt_ppgtt_exhaust_huge(void *arg)
 				continue;
 
 			obj = huge_pages_object(i915, size, page_sizes);
-			if (IS_ERR(obj)) {
-				err = PTR_ERR(obj);
-				goto out_device;
-			}
+			if (IS_ERR(obj))
+				return PTR_ERR(obj);
 
 			err = i915_gem_object_pin_pages(obj);
 			if (err) {
 				i915_gem_object_put(obj);
 
 				if (err == -ENOMEM) {
-					pr_info("unable to get pages, size=%u, pages=%u\n",
-						size, page_sizes);
-					err = 0;
-					break;
+					pr_info("%s unable to get pages, size=%u, pages=%u\n",
+						__func__, size, page_sizes);
+					return 0;
 				}
 
-				pr_err("pin_pages failed, size=%u, pages=%u\n",
-				       size_mask, page_mask);
+				pr_err("%s pin_pages failed, size=%u, pages=%u\n",
+				       __func__, size_mask, page_mask);
 
-				goto out_device;
+				return err;
 			}
 
 			/* Force the page-size for the gtt insertion */
 			obj->mm.page_sizes.sg = page_sizes;
 
 			err = igt_write_huge(ctx, obj, false);
-			if (err) {
-				pr_err("exhaust write-huge failed with size=%u\n",
-				       size);
-				goto out_unpin;
-			}
-
 			i915_gem_object_unpin_pages(obj);
 			__i915_gem_object_put_pages(obj, I915_MM_NORMAL);
 			i915_gem_object_put(obj);
+			if (err) {
+				pr_err("%s write-huge failed with size=%u, pages=%u\n",
+				       __func__, size, page_sizes);
+				return err;
+			}
+
+			if (igt_timeout(end_time,
+					"%s timed out at size=%u pages=%x\n",
+					__func__, size, page_sizes))
+				return 0;
 		}
 	}
 
-	goto out_device;
+	cond_resched();
 
-out_unpin:
-	i915_gem_object_unpin_pages(obj);
-	i915_gem_object_put(obj);
-out_device:
-	mkwrite_device_info(i915)->page_sizes = supported;
+	i915_gem_drain_freed_objects(i915);
 
-	return err;
+	GEM_BUG_ON(!size);
+
+	{
+		u64 next = roundup_pow_of_two(size) << 1ULL;
+		if (overflows_type(next, typeof(base)))
+			return 0;
+
+		base = next;
+	}
+
+	goto again;
 }
 
 static u32 igt_random_size(struct rnd_state *prng,
