@@ -1314,20 +1314,33 @@ out_device:
 	return err;
 }
 
+static u32 igt_random_size(struct rnd_state *prng,
+			   u32 min_page_size,
+			   u32 max_page_size)
+{
+	u32 size;
+	u32 mask;
+
+	GEM_BUG_ON(!is_power_of_2(min_page_size));
+	GEM_BUG_ON(!is_power_of_2(max_page_size));
+	GEM_BUG_ON(min_page_size < PAGE_SIZE);
+	GEM_BUG_ON(min_page_size > max_page_size);
+
+	mask = GENMASK_ULL(ilog2(max_page_size), PAGE_SHIFT);
+	size = prandom_u32_state(prng) & mask;
+	if (size < min_page_size)
+		size |= min_page_size;
+
+	return size;
+}
+
 static int igt_ppgtt_internal_huge(void *arg)
 {
 	struct i915_gem_context *ctx = arg;
 	struct drm_i915_private *i915 = ctx->i915;
 	struct drm_i915_gem_object *obj;
-	static const unsigned int sizes[] = {
-		SZ_64K,
-		SZ_128K,
-		SZ_256K,
-		SZ_512K,
-		SZ_1M,
-		SZ_2M,
-	};
-	int i;
+	I915_RND_STATE(prng);
+	u32 size;
 	int err;
 
 	/*
@@ -1335,41 +1348,35 @@ static int igt_ppgtt_internal_huge(void *arg)
 	 * -- ensure that our writes land in the right place.
 	 */
 
-	for (i = 0; i < ARRAY_SIZE(sizes); ++i) {
-		unsigned int size = sizes[i];
+	size = igt_random_size(&prng, SZ_64K, SZ_2M);
 
-		obj = i915_gem_object_create_internal(i915, size);
-		if (IS_ERR(obj))
-			return PTR_ERR(obj);
+	obj = i915_gem_object_create_internal(i915, size);
+	if (IS_ERR(obj))
+		return PTR_ERR(obj);
 
-		err = i915_gem_object_pin_pages(obj);
-		if (err)
-			goto out_put;
+	err = i915_gem_object_pin_pages(obj);
+	if (err)
+		goto out_put;
 
-		if (obj->mm.page_sizes.phys < I915_GTT_PAGE_SIZE_64K) {
-			pr_info("internal unable to allocate huge-page(s) with size=%u\n",
-				size);
-			goto out_unpin;
-		}
-
-		err = igt_write_huge(ctx, obj);
-		if (err) {
-			pr_err("internal write-huge failed with size=%u\n",
-			       size);
-			goto out_unpin;
-		}
-
-		i915_gem_object_unpin_pages(obj);
-		__i915_gem_object_put_pages(obj, I915_MM_NORMAL);
-		i915_gem_object_put(obj);
+	if (obj->mm.page_sizes.phys < I915_GTT_PAGE_SIZE_64K) {
+		pr_info("%s unable to allocate huge-page(s) with size=%u\n",
+			__func__, size);
+		err = -ENOMEM;
+		goto out_unpin;
 	}
 
-	return 0;
+	err = igt_write_huge(ctx, obj);
+	if (err)
+		pr_err("%s write-huge failed with size=%u\n", __func__, size);
 
 out_unpin:
 	i915_gem_object_unpin_pages(obj);
+	__i915_gem_object_put_pages(obj, I915_MM_NORMAL);
 out_put:
 	i915_gem_object_put(obj);
+
+	if (err == -ENOMEM)
+		err = 0;
 
 	return err;
 }
@@ -1384,14 +1391,8 @@ static int igt_ppgtt_gemfs_huge(void *arg)
 	struct i915_gem_context *ctx = arg;
 	struct drm_i915_private *i915 = ctx->i915;
 	struct drm_i915_gem_object *obj;
-	static const unsigned int sizes[] = {
-		SZ_2M,
-		SZ_4M,
-		SZ_8M,
-		SZ_16M,
-		SZ_32M,
-	};
-	int i;
+	I915_RND_STATE(prng);
+	u32 size;
 	int err;
 
 	/*
@@ -1400,45 +1401,39 @@ static int igt_ppgtt_gemfs_huge(void *arg)
 	 */
 
 	if (!igt_can_allocate_thp(i915)) {
-		pr_info("missing THP support, skipping\n");
+		pr_info("%s missing THP support, skipping\n", __func__);
 		return 0;
 	}
 
-	for (i = 0; i < ARRAY_SIZE(sizes); ++i) {
-		unsigned int size = sizes[i];
+	size = igt_random_size(&prng, SZ_2M, SZ_32M);
 
-		obj = i915_gem_object_create_shmem(i915, size);
-		if (IS_ERR(obj))
-			return PTR_ERR(obj);
+	obj = i915_gem_object_create_shmem(i915, size);
+	if (IS_ERR(obj))
+		return PTR_ERR(obj);
 
-		err = i915_gem_object_pin_pages(obj);
-		if (err)
-			goto out_put;
+	err = i915_gem_object_pin_pages(obj);
+	if (err)
+		goto out_put;
 
-		if (obj->mm.page_sizes.phys < I915_GTT_PAGE_SIZE_2M) {
-			pr_info("finishing test early, gemfs unable to allocate huge-page(s) with size=%u\n",
-				size);
-			goto out_unpin;
-		}
-
-		err = igt_write_huge(ctx, obj);
-		if (err) {
-			pr_err("gemfs write-huge failed with size=%u\n",
-			       size);
-			goto out_unpin;
-		}
-
-		i915_gem_object_unpin_pages(obj);
-		__i915_gem_object_put_pages(obj, I915_MM_NORMAL);
-		i915_gem_object_put(obj);
+	if (obj->mm.page_sizes.phys < I915_GTT_PAGE_SIZE_2M) {
+		pr_info("%s finishing test early, gemfs unable to allocate huge-page(s) with size=%u\n",
+			__func__, size);
+		err = -ENOMEM;
+		goto out_unpin;
 	}
 
-	return 0;
+	err = igt_write_huge(ctx, obj);
+	if (err)
+		pr_err("%s write-huge failed with size=%u\n", __func__, size);
 
 out_unpin:
 	i915_gem_object_unpin_pages(obj);
+	__i915_gem_object_put_pages(obj, I915_MM_NORMAL);
 out_put:
 	i915_gem_object_put(obj);
+
+	if (err == -ENOMEM)
+		err = 0;
 
 	return err;
 }
@@ -1448,13 +1443,8 @@ static int igt_ppgtt_lmem_huge(void *arg)
 	struct i915_gem_context *ctx = arg;
 	struct drm_i915_private *i915 = ctx->i915;
 	struct drm_i915_gem_object *obj;
-	static const unsigned int sizes[] = {
-		SZ_64K,
-		SZ_512K,
-		SZ_1M,
-		SZ_2M,
-	};
-	int i;
+	I915_RND_STATE(prng);
+	u32 size;
 	int err;
 
 	if (!HAS_LMEM(i915)) {
@@ -1467,49 +1457,49 @@ static int igt_ppgtt_lmem_huge(void *arg)
 	 * -- ensure that our writes land in the right place.
 	 */
 
-	for (i = 0; i < ARRAY_SIZE(sizes); ++i) {
-		unsigned int size = sizes[i];
+	size = SZ_1G;
+try_again:
+	size = igt_random_size(&prng, SZ_64K, rounddown_pow_of_two(size));
 
-		obj = i915_gem_object_create_lmem(i915, size, I915_BO_ALLOC_CONTIGUOUS);
-		if (IS_ERR(obj)) {
-			err = PTR_ERR(obj);
-			if (err == -E2BIG) {
-				pr_info("object too big for region!\n");
-				return 0;
-			}
-
-			return err;
+	obj = i915_gem_object_create_lmem(i915, size, 0);
+	if (IS_ERR(obj)) {
+		err = PTR_ERR(obj);
+		if (err == -E2BIG) {
+			size >>= 1;
+			goto try_again;
 		}
 
-		err = i915_gem_object_pin_pages(obj);
-		if (err)
-			goto out_put;
-
-		if (obj->mm.page_sizes.phys < I915_GTT_PAGE_SIZE_64K) {
-			pr_info("LMEM unable to allocate huge-page(s) with size=%u\n",
-				size);
-			goto out_unpin;
-		}
-
-		err = igt_write_huge(ctx, obj);
-		if (err) {
-			pr_err("LMEM write-huge failed with size=%u\n", size);
-			goto out_unpin;
-		}
-
-		i915_gem_object_unpin_pages(obj);
-		__i915_gem_object_put_pages(obj, I915_MM_NORMAL);
-		i915_gem_object_put(obj);
+		return err;
 	}
 
-	return 0;
+	err = i915_gem_object_pin_pages(obj);
+	if (err) {
+		if (err == -ENXIO) {
+			i915_gem_object_put(obj);
+			size >>= 1;
+			goto try_again;
+		}
+		goto out_put;
+	}
+
+	if (obj->mm.page_sizes.phys < I915_GTT_PAGE_SIZE_64K) {
+		pr_info("%s unable to allocate huge-page(s) with size=%u\n",
+			__func__, size);
+		err = -ENOMEM;
+		goto out_unpin;
+	}
+
+	err = igt_write_huge(ctx, obj);
+	if (err)
+		pr_err("%s write-huge failed with size=%u\n", __func__, size);
 
 out_unpin:
 	i915_gem_object_unpin_pages(obj);
+	__i915_gem_object_put_pages(obj, I915_MM_NORMAL);
 out_put:
 	i915_gem_object_put(obj);
 
-	if (err == -ENOMEM)
+	if (err == -ENOMEM || err == -ENXIO)
 		err = 0;
 
 	return err;
