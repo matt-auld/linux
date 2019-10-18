@@ -119,6 +119,7 @@ gem-y += \
 	gem/i915_gem_internal.o \
 	gem/i915_gem_object.o \
 	gem/i915_gem_object_blt.o \
+	gem/i915_gem_lmem.o \
 	gem/i915_gem_mman.o \
 	gem/i915_gem_pages.o \
 	gem/i915_gem_phys.o \
@@ -147,6 +148,7 @@ i915-y += \
 	  i915_scheduler.o \
 	  i915_trace_points.o \
 	  i915_vma.o \
+	  intel_region_lmem.o \
 	  intel_wopcm.o
 
 # general-purpose microcontroller (GuC) support
