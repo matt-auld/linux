@@ -143,6 +143,7 @@ i915-y += \
 	  i915_gem_gtt.o \
 	  i915_gem.o \
 	  i915_globals.o \
+	  i915_memory_regions.o \
 	  i915_query.o \
 	  i915_request.o \
 	  i915_scheduler.o \
