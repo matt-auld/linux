@@ -759,7 +759,7 @@ static int eb_lookup_vmas(struct i915_execbuffer *eb)
 		lut->handle = handle;
 		lut->ctx = eb->gem_context;
 
-		i915_gem_object_lock(obj);
+		i915_gem_object_lock(obj, NULL);
 		list_add(&lut->obj_link, &obj->lut_list);
 		i915_gem_object_unlock(obj);
 
@@ -1013,7 +1013,7 @@ static void *reloc_iomap(struct drm_i915_gem_object *obj,
 		if (use_cpu_reloc(cache, obj))
 			return NULL;
 
-		i915_gem_object_lock(obj);
+		i915_gem_object_lock(obj, NULL);
 		err = i915_gem_object_set_to_gtt_domain(obj, true);
 		i915_gem_object_unlock(obj);
 		if (err)

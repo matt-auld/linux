@@ -142,7 +142,7 @@ int i915_gem_object_fill_blt(struct drm_i915_gem_object *obj,
 		return err;
 
 	if (obj->cache_dirty & ~obj->cache_coherent) {
-		i915_gem_object_lock(obj);
+		i915_gem_object_lock(obj, NULL);
 		i915_gem_clflush_object(obj, 0);
 		i915_gem_object_unlock(obj);
 	}
