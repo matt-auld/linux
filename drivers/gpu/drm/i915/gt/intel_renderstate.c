@@ -74,9 +74,10 @@ static int render_state_setup(struct intel_renderstate *so,
 	u32 *d;
 	int ret;
 
+	i915_gem_object_lock(so->vma->obj, NULL);
 	ret = i915_gem_object_prepare_write(so->vma->obj, &needs_clflush);
 	if (ret)
-		return ret;
+		goto out_unlock;
 
 	d = kmap_atomic(i915_gem_object_get_dirty_page(so->vma->obj, 0));
 
@@ -157,6 +158,8 @@ static int render_state_setup(struct intel_renderstate *so,
 	ret = 0;
 out:
 	i915_gem_object_finish_access(so->vma->obj);
+out_unlock:
+	i915_gem_object_unlock(so->vma->obj);
 	return ret;
 
 err:

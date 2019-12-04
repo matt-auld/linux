@@ -1865,9 +1865,13 @@ static int perform_bb_shadow(struct parser_exec_state *s)
 		goto err_free_bb;
 	}
 
-	ret = i915_gem_object_prepare_write(bb->obj, &bb->clflush);
+	ret = i915_gem_object_lock_interruptible(bb->obj, NULL);
 	if (ret)
 		goto err_free_obj;
+
+	ret = i915_gem_object_prepare_write(bb->obj, &bb->clflush);
+	if (ret)
+		goto err_unlock;
 
 	bb->va = i915_gem_object_pin_map(bb->obj, I915_MAP_WB);
 	if (IS_ERR(bb->va)) {
@@ -1893,6 +1897,7 @@ static int perform_bb_shadow(struct parser_exec_state *s)
 	if (ret)
 		goto err_unmap;
 
+	i915_gem_object_unlock(bb->obj);
 	INIT_LIST_HEAD(&bb->list);
 	list_add(&bb->list, &s->workload->shadow_bb);
 
@@ -1919,6 +1924,8 @@ err_unmap:
 	i915_gem_object_unpin_map(bb->obj);
 err_finish_shmem_access:
 	i915_gem_object_finish_access(bb->obj);
+err_unlock:
+	i915_gem_object_unlock(bb->obj);
 err_free_obj:
 	i915_gem_object_put(bb->obj);
 err_free_bb:
