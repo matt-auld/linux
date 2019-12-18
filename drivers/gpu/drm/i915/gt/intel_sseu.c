@@ -104,6 +104,7 @@ static u16 compute_eu_total(const struct sseu_dev_info *sseu)
 static void gen11_compute_sseu_info(struct sseu_dev_info *sseu,
 				    u8 s_en, u32 ss_en, u16 eu_en)
 {
+	u32 ss_mask;
 	int s, ss;
 
 	/* ss_en represents entire subslice mask across all slices */
@@ -116,7 +117,10 @@ static void gen11_compute_sseu_info(struct sseu_dev_info *sseu,
 
 		sseu->slice_mask |= BIT(s);
 
-		intel_sseu_set_subslices(sseu, s, ss_en);
+		ss_mask = ss_en >> (s * sseu->max_subslices);
+		ss_mask &= GENMASK(sseu->max_subslices - 1, 0);
+
+		intel_sseu_set_subslices(sseu, s, ss_mask);
 
 		for (ss = 0; ss < sseu->max_subslices; ss++)
 			if (intel_sseu_has_subslice(sseu, s, ss))
