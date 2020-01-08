@@ -270,7 +270,6 @@ void intel_renderstate_fini(struct intel_renderstate *so,
 			    struct intel_context *ce)
 {
 	i915_vma_unpin_and_release(&so->vma, 0);
-
 	intel_context_unpin(ce);
 	i915_gem_ww_ctx_fini(&so->ww);
 }
