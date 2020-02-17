@@ -848,6 +848,8 @@ static int live_all_engines(void *arg)
 		goto out_free;
 	}
 
+	i915_vma_lock(batch);
+
 	idx = 0;
 	for_each_uabi_engine(engine, i915) {
 		request[idx] = intel_engine_create_kernel_request(engine);
@@ -865,17 +867,17 @@ static int live_all_engines(void *arg)
 		GEM_BUG_ON(err);
 		request[idx]->batch = batch;
 
-		i915_vma_lock(batch);
 		err = i915_request_await_object(request[idx], batch->obj, 0);
 		if (err == 0)
 			err = i915_vma_move_to_active(batch, request[idx], 0);
-		i915_vma_unlock(batch);
 		GEM_BUG_ON(err);
 
 		i915_request_get(request[idx]);
 		i915_request_add(request[idx]);
 		idx++;
 	}
+
+	i915_vma_unlock(batch);
 
 	idx = 0;
 	for_each_uabi_engine(engine, i915) {
