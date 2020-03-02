@@ -163,6 +163,19 @@ search_again:
 			}
 		}
 
+		/*
+		 * XXX: On the first phase we only go as far as trylock, if that
+		 * fails then we are so screwed, since we have to drop the vm
+		 * mutex, which also means we have to unwind the roster,
+		 * everytime we encounter a contended lock, also the bound list
+		 * might change since we drop the vm->mutex, so we have to redo
+		 * everthing each time, which is not great....
+		 *
+		 * What happens if drm_mm is instead protected by its own
+		 * ww_mutex? That we don't need to unwind the roster, unless we
+		 * have to go all the way back to the execbuf?
+		 */
+
 		if (mark_free(&scan, vma, flags, &eviction_list))
 			goto found;
 	}
