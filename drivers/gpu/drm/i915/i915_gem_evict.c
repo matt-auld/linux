@@ -322,6 +322,43 @@ int i915_gem_evict_for_node(struct i915_address_space *vm,
 			break;
 		}
 
+		if (vma->obj->base.resv->lock.ctx != &ww->ctx) {
+			/*
+			 * XXX: Thiis is WRONG, what to do with object-less
+			 * VMAs? Or do we need first class VMA support, i.e the
+			 * vma would have vma->resv, and in the case that it is
+			 * truly object-less it would have its own resv obj,
+			 * otherwise it would just be an alias of the objects
+			 * resv, or something?
+			 */
+
+			if (!i915_gem_object_trylock(vma->obj)) {
+				/* XXX: It seems like we need to drop the vm
+				 * lock *before* we attempt a full lock on the
+				 * contested object, which ofc might block and
+				 * lead to deadlock, since the vm lock is an
+				 * in-between dependency since we may already be
+				 * holding resv locks from the execbuf and now
+				 * we need to grab more, so we need to somehow
+				 * drop the vm lock and then try to grab the
+				 * contested lock. If that still fails we have
+				 * to go all the way back to the execbuffer
+				 * ioctl and drop *all* our object locks, even
+				 * though the contested lock we want to grab
+				 * might be worthless now....holy shit, and then
+				 * we have to somehow get back here with the
+				 * contested lock held, before we continue from
+				 * where we left off, i guess we just do the
+				 * unbind from there in that case? maybe???
+				 *
+				 * Do we need vma refcounting for this???
+				 */
+				ww->contended = i915_gem_object_get(vma->obj);
+				ret = -EDEADLK;
+				break;
+			}
+		}
+
 		/*
 		 * Never show fear in the face of dragons!
 		 *
@@ -339,6 +376,8 @@ int i915_gem_evict_for_node(struct i915_address_space *vm,
 		__i915_vma_unpin(vma);
 		if (ret == 0)
 			ret = __i915_vma_unbind(vma);
+
+		i915_gem_object_unlock(vma->obj);
 	}
 
 	return ret;
