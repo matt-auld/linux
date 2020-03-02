@@ -921,6 +921,25 @@ int i915_vma_pin_ww(struct i915_vma *vma, struct i915_gem_ww_ctx *ww,
 	if (flags & PIN_GLOBAL)
 		wakeref = intel_runtime_pm_get(&vma->vm->i915->runtime_pm);
 
+try_again:
+	if (err == -EDEADLK && ww->contended) {
+		err = i915_gem_object_lock(ww->contended, ww);
+		if (err) {
+			/*
+			 * We might have to do a full backoff from the execbuf
+			 * on the contented lock.
+			 */
+			goto err_fence;
+		}
+
+		/*
+		 * We have the lock now so we can do the unbind, if still
+		 * required by the eviction logic.
+		 */
+
+		ww->contended = NULL;
+	}
+
 	/* No more allocations allowed once we hold vm->mutex */
 	err = mutex_lock_interruptible(&vma->vm->mutex);
 	if (err)
@@ -986,6 +1005,9 @@ err_active:
 	i915_active_release(&vma->active);
 err_unlock:
 	mutex_unlock(&vma->vm->mutex);
+
+	if (err == -EDEADLK && ww->contended)
+		goto try_again;
 err_fence:
 	if (work)
 		dma_fence_work_commit(&work->base);
