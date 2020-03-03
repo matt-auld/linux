@@ -862,7 +862,8 @@ int i915_vma_pin_ww(struct i915_vma *vma, struct i915_gem_ww_ctx *ww,
 	unsigned int bound;
 	int err;
 
-	if (IS_ENABLED(CONFIG_PROVE_LOCKING) && debug_locks) {
+#ifdef CONFIG_PROVE_LOCKING
+	if (debug_locks) {
 		bool pinned_bind_wo_alloc =
 			vma->obj && i915_gem_object_has_pinned_pages(vma->obj) &&
 			!vma->vm->allocate_va_range;
@@ -870,7 +871,10 @@ int i915_vma_pin_ww(struct i915_vma *vma, struct i915_gem_ww_ctx *ww,
 		if (lockdep_is_held(&vma->vm->i915->drm.struct_mutex) &&
 		    !pinned_bind_wo_alloc)
 			WARN_ON(!ww);
+		if (ww && vma->resv)
+			assert_vma_held(vma);
 	}
+#endif
 
 	BUILD_BUG_ON(PIN_GLOBAL != I915_VMA_GLOBAL_BIND);
 	BUILD_BUG_ON(PIN_USER != I915_VMA_LOCAL_BIND);
@@ -1017,8 +1021,8 @@ static void flush_idle_contexts(struct intel_gt *gt)
 	intel_gt_wait_for_idle(gt, MAX_SCHEDULE_TIMEOUT);
 }
 
-int i915_ggtt_pin(struct i915_vma *vma, struct i915_gem_ww_ctx *ww,
-		  u32 align, unsigned int flags)
+static int __i915_ggtt_pin(struct i915_vma *vma, struct i915_gem_ww_ctx *ww,
+			   u32 align, unsigned int flags, bool unlocked)
 {
 	struct i915_address_space *vm = vma->vm;
 	int err;
@@ -1026,7 +1030,10 @@ int i915_ggtt_pin(struct i915_vma *vma, struct i915_gem_ww_ctx *ww,
 	GEM_BUG_ON(!i915_vma_is_ggtt(vma));
 
 	do {
-		err = i915_vma_pin_ww(vma, ww, 0, align, flags | PIN_GLOBAL);
+		if (ww || unlocked)
+			err = i915_vma_pin_ww(vma, ww, 0, align, flags | PIN_GLOBAL);
+		else
+			err = i915_vma_pin(vma, 0, align, flags | PIN_GLOBAL);
 		if (err != -ENOSPC) {
 			if (!err) {
 				err = i915_vma_wait_for_bind(vma);
@@ -1043,6 +1050,37 @@ int i915_ggtt_pin(struct i915_vma *vma, struct i915_gem_ww_ctx *ww,
 			mutex_unlock(&vm->mutex);
 		}
 	} while (1);
+}
+
+int i915_ggtt_pin(struct i915_vma *vma, struct i915_gem_ww_ctx *ww,
+		  u32 align, unsigned int flags)
+{
+#ifdef CONFIG_LOCKDEP
+	WARN_ON(!ww && vma->resv && dma_resv_held(vma->resv));
+#endif
+
+	return __i915_ggtt_pin(vma, ww, align, flags, false);
+}
+
+/**
+ * i915_ggtt_pin_unlocked - Pin a vma to ggtt without the underlying
+ * object's dma-resv held, but with object pages pinned.
+ *
+ * @vma: The vma to pin.
+ * @align: ggtt alignment.
+ * @flags: Pinning flags
+ *
+ * RETURN: Zero on success, negative error code on error.
+ *
+ * This function relies on the fact that object pages are already pinned,
+ * and that ggtt pinning doesn't require any page table page allocations
+ * to pin a vma without dma_resv lock and ww acquire context.
+ */
+int i915_ggtt_pin_unlocked(struct i915_vma *vma, u32 align, unsigned int flags)
+{
+	if (IS_ENABLED(CONFIG_LOCKDEP))
+		WARN_ON(vma->obj && !i915_gem_object_has_pinned_pages(vma->obj));
+	return __i915_ggtt_pin(vma, NULL, align, flags, true);
 }
 
 static void __vma_close(struct i915_vma *vma, struct intel_gt *gt)

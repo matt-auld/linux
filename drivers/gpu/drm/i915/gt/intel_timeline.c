@@ -46,7 +46,7 @@ static int __hwsp_alloc(struct intel_gt *gt, struct intel_timeline_hwsp *hwsp)
 		goto out_unlock;
 	}
 
-	/* Pin early so we can call i915_ggtt_pin unlocked. */
+	/* Pin early so we can call i915_ggtt_pin_unlocked(). */
 	hwsp->vaddr = i915_gem_object_pin_map(obj, I915_MAP_WB);
 	if (IS_ERR(hwsp->vaddr)) {
 		ret = PTR_ERR(hwsp->vaddr);
@@ -514,7 +514,7 @@ __intel_timeline_get_seqno(struct intel_timeline *tl,
 		goto err_rollback;
 	}
 
-	err = i915_ggtt_pin(vma, NULL, 0, PIN_HIGH);
+	err = i915_ggtt_pin_unlocked(vma, 0, PIN_HIGH);
 	if (err) {
 		__idle_hwsp_free(vma->private, cacheline);
 		goto err_rollback;
