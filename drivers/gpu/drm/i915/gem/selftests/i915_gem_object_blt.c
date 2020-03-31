@@ -16,6 +16,7 @@
 #include "selftests/mock_drm.h"
 #include "huge_gem_object.h"
 #include "mock_context.h"
+#include "gem/i915_gem_region.h"
 
 static int wrap_ktime_compare(const void *A, const void *B)
 {
@@ -566,6 +567,171 @@ static int igt_copy_blt(void *arg)
 static int igt_copy_blt_ctx0(void *arg)
 {
 	return test_copy_engines(arg, igt_copy_blt_thread, SINGLE_CTX);
+}
+
+static int __igt_obj_window_blt_copy(struct drm_i915_private *i915,
+				     struct intel_memory_region *src_mem,
+				     struct intel_memory_region *dst_mem,
+				     u64 size)
+{
+	struct drm_i915_gem_object *src, *dst;
+	ktime_t t0, t1;
+	u32 *vaddr, i;
+	int err;
+
+	src = i915_gem_object_create_region(src_mem, size, 0);
+	if (IS_ERR(src)) {
+		err = PTR_ERR(src);
+		goto err;
+	}
+	size = max_t(u64, size, src->base.size);
+	i915_gem_object_lock_isolated(src);
+
+	dst = i915_gem_object_create_region(dst_mem, size, 0);
+	if (IS_ERR(dst)) {
+		err = PTR_ERR(dst);
+		goto err_put_src;
+	}
+
+	i915_gem_object_lock_isolated(dst);
+
+	vaddr = i915_gem_object_pin_map(src,
+					i915_coherent_map_type(i915, src, true));
+	if (IS_ERR(vaddr)) {
+		err = PTR_ERR(vaddr);
+		pr_err("Failed at pin map of src. %d\n", err);
+		goto err_put_dst;
+	}
+
+	for (i = 0; i < size / sizeof(u32); i++)
+		vaddr[i] = i;
+
+	if (!(src->cache_coherent & I915_BO_CACHE_COHERENT_FOR_READ))
+		src->cache_dirty = true;
+
+	vaddr = i915_gem_object_pin_map(dst,
+					i915_coherent_map_type(i915, dst, true));
+	if (IS_ERR(vaddr)) {
+		err = PTR_ERR(vaddr);
+		pr_err("Failed at pin map of dst. %d\n", err);
+		goto err_unpin_src;
+	}
+	memset32(vaddr, 0xdeadbeaf, size / sizeof(u32));
+
+	if (!(dst->cache_coherent & I915_BO_CACHE_COHERENT_FOR_WRITE))
+		dst->cache_dirty = true;
+
+	/*
+	 * FIXME: Blitter based eviction is failing occasionally due to
+	 * trylock approach. To avoid the selftest failure due to trylocks,
+	 * we are adding retries with a delay inn between.
+	 * Retry count and delay are fixed on trial and error basis.
+	 * As soon as trylocks are removed from blt eviction, we should
+	 * remove this retry attempts.
+	 */
+#define WINDOW_BLT_COPY_RETRY		3
+	for (i = 0; i <= WINDOW_BLT_COPY_RETRY; i++) {
+		t0 = ktime_get();
+		err = i915_window_blt_copy(dst, src);
+		if (err == -EBUSY)
+			msleep(1);
+		else
+			break;
+	}
+
+	if (err)
+		goto err_unpin_dst;
+
+	t1 = ktime_sub(ktime_get(), t0);
+	pr_info("blt of %zd KiB at %lld MiB/s\n", src->base.size >> 10,
+		div64_u64(mul_u32_u32(src->base.size, 1000 * 1000 * 1000),
+			  t1) >> 20);
+
+	for (i = 0; i < size / sizeof(u32); i += 17) {
+		if (!(dst->cache_coherent & I915_BO_CACHE_COHERENT_FOR_READ))
+			drm_clflush_virt_range(&vaddr[i], sizeof(vaddr[i]));
+
+		if (vaddr[i] != i) {
+			pr_err("vaddr[%u]=%x, expected=%x\n", i,
+			       vaddr[i], i);
+			err = -EINVAL;
+			goto err_unpin_dst;
+		}
+	}
+
+err_unpin_dst:
+	i915_gem_object_unpin_map(dst);
+err_unpin_src:
+	i915_gem_object_unpin_map(src);
+err_put_dst:
+	i915_gem_object_unlock(dst);
+	i915_gem_object_put(dst);
+err_put_src:
+	i915_gem_object_unlock(src);
+	i915_gem_object_put(src);
+err:
+	if (err == -ENODEV)
+		err = 0;
+	return err;
+}
+
+static int igt_obj_window_blt_copy(void *data)
+{
+	struct drm_i915_private *i915 = data;
+	u64 size[] = {SZ_2K, SZ_4K, SZ_64K, SZ_4M, SZ_8M + SZ_2K, SZ_64M};
+	struct intel_memory_region *lmem =
+		intel_memory_region_by_type(i915, INTEL_MEMORY_LOCAL);
+	struct intel_memory_region *smem =
+		intel_memory_region_by_type(i915, INTEL_MEMORY_SYSTEM);
+	int i, ret;
+
+	for (i = 0; i < ARRAY_SIZE(size); i++) {
+		ret =  __igt_obj_window_blt_copy(i915, lmem, lmem, size[i]);
+		if (ret < 0) {
+			pr_err("%s: Failed at lmem->lmem size: %llu, err: %d\n",
+			       __func__, size[i], ret);
+			break;
+		}
+		ret =  __igt_obj_window_blt_copy(i915, smem, smem, size[i]);
+		if (ret < 0) {
+			pr_err("%s: Failed at smem->smem size: %llu, err: %d\n",
+			       __func__, size[i], ret);
+			break;
+		}
+		ret =  __igt_obj_window_blt_copy(i915, lmem, smem, size[i]);
+		if (ret < 0) {
+			pr_err("%s: Failed at lmem->smem size: %llu, err: %d\n",
+			       __func__, size[i], ret);
+			break;
+		}
+
+		ret =  __igt_obj_window_blt_copy(i915, smem, lmem, size[i]);
+		if (ret < 0) {
+			pr_err("%s: Failed at smem->lmem size: %llu, err: %d\n",
+			       __func__, size[i], ret);
+			break;
+		}
+	}
+
+	return ret;
+}
+
+int i915_obj_window_blt_copy_live_selftests(struct drm_i915_private *i915)
+{
+	static const struct i915_subtest tests[] = {
+		SUBTEST(igt_obj_window_blt_copy),
+	};
+
+	if (intel_gt_is_wedged(&i915->gt))
+		return 0;
+
+	if (!HAS_ENGINE(&i915->gt, BCS0))
+		return 0;
+
+	if (!HAS_LMEM(i915))
+		return 0;
+
+	return i915_live_subtests(tests, i915);
 }
 
 int i915_gem_object_blt_live_selftests(struct drm_i915_private *i915)
