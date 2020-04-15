@@ -375,6 +375,9 @@ static int i915_gem_object_info(struct seq_file *m, void *data)
 	seq_printf(m, "num_bytes_swapped_out %ld num_bytes_swapped_in %ld\n",
 		   atomic_long_read(&i915->num_bytes_swapped_out),
 		   atomic_long_read(&i915->num_bytes_swapped_in));
+	seq_printf(m, "time_swap_out_msec %ld time_swap_in_msec %ld\n",
+		   atomic_long_read(&i915->time_swap_out_ms),
+		   atomic_long_read(&i915->time_swap_in_ms));
 	seq_putc(m, '\n');
 
 	print_context_stats(m, i915);

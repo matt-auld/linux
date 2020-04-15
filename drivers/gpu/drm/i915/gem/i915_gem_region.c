@@ -15,6 +15,7 @@ i915_gem_object_swapout_pages(struct drm_i915_gem_object *obj,
 {
 	struct drm_i915_private *i915 = to_i915(obj->base.dev);
 	struct drm_i915_gem_object *dst, *src;
+	unsigned long start, diff, msec;
 	int err;
 
 	GEM_BUG_ON(obj->swapto);
@@ -24,6 +25,7 @@ i915_gem_object_swapout_pages(struct drm_i915_gem_object *obj,
 	GEM_BUG_ON(!i915->params.enable_eviction);
 
 	assert_object_held(obj);
+	start = jiffies;
 
 	/* create a shadow object on smem region */
 	dst = i915_gem_object_create_shmem(i915, obj->base.size);
@@ -64,8 +66,12 @@ i915_gem_object_swapout_pages(struct drm_i915_gem_object *obj,
 	else
 		i915_gem_object_put(dst);
 
-	if (!err)
+	if (!err) {
+		diff = jiffies - start;
+		msec = diff * 1000 / HZ;
+		atomic_long_add(msec, &i915->time_swap_out_ms);
 		atomic_long_add(sizes, &i915->num_bytes_swapped_out);
+	}
 
 	return err;
 }
@@ -76,6 +82,7 @@ i915_gem_object_swapin_pages(struct drm_i915_gem_object *obj,
 {
 	struct drm_i915_private *i915 = to_i915(obj->base.dev);
 	struct drm_i915_gem_object *dst, *src;
+	unsigned long start, diff, msec;
 	int err;
 
 	GEM_BUG_ON(!obj->swapto);
@@ -85,6 +92,7 @@ i915_gem_object_swapin_pages(struct drm_i915_gem_object *obj,
 	GEM_BUG_ON(!i915->params.enable_eviction);
 
 	assert_object_held(obj);
+	start = jiffies;
 
 	src = obj->swapto;
 
@@ -121,8 +129,12 @@ i915_gem_object_swapin_pages(struct drm_i915_gem_object *obj,
 		i915_gem_object_put(src);
 	}
 
-	if (!err)
+	if (!err) {
+		diff = jiffies - start;
+		msec = diff * 1000 / HZ;
+		atomic_long_add(msec, &i915->time_swap_in_ms);
 		atomic_long_add(sizes, &i915->num_bytes_swapped_in);
+	}
 
 	return err;
 }

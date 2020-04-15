@@ -1217,6 +1217,8 @@ struct drm_i915_private {
 
 	atomic_long_t num_bytes_swapped_out;
 	atomic_long_t num_bytes_swapped_in;
+	atomic_long_t time_swap_out_ms;
+	atomic_long_t time_swap_in_ms;
 };
 
 static inline struct drm_i915_private *to_i915(const struct drm_device *dev)
