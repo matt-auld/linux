@@ -1214,6 +1214,9 @@ struct drm_i915_private {
 	 * NOTE: This is the dri1/ums dungeon, don't add stuff here. Your patch
 	 * will be rejected. Instead look for a better place.
 	 */
+
+	atomic_long_t num_bytes_swapped_out;
+	atomic_long_t num_bytes_swapped_in;
 };
 
 static inline struct drm_i915_private *to_i915(const struct drm_device *dev)

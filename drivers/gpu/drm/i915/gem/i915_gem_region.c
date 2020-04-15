@@ -64,6 +64,9 @@ i915_gem_object_swapout_pages(struct drm_i915_gem_object *obj,
 	else
 		i915_gem_object_put(dst);
 
+	if (!err)
+		atomic_long_add(sizes, &i915->num_bytes_swapped_out);
+
 	return err;
 }
 
@@ -117,6 +120,9 @@ i915_gem_object_swapin_pages(struct drm_i915_gem_object *obj,
 		obj->swapto = NULL;
 		i915_gem_object_put(src);
 	}
+
+	if (!err)
+		atomic_long_add(sizes, &i915->num_bytes_swapped_in);
 
 	return err;
 }

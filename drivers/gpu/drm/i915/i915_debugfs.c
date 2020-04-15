@@ -372,6 +372,9 @@ static int i915_gem_object_info(struct seq_file *m, void *data)
 	for_each_memory_region(mr, i915, id)
 		seq_printf(m, "%s: total:%pa, available:%pa bytes\n",
 			   mr->name, &mr->total, &mr->avail);
+	seq_printf(m, "num_bytes_swapped_out %ld num_bytes_swapped_in %ld\n",
+		   atomic_long_read(&i915->num_bytes_swapped_out),
+		   atomic_long_read(&i915->num_bytes_swapped_in));
 	seq_putc(m, '\n');
 
 	print_context_stats(m, i915);
