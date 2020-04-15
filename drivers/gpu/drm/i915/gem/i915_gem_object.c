@@ -30,11 +30,13 @@
 #include "i915_drv.h"
 #include "i915_gem_clflush.h"
 #include "i915_gem_context.h"
+#include "i915_gem_lmem.h"
 #include "i915_gem_mman.h"
 #include "i915_gem_object.h"
 #include "i915_gem_object_blt.h"
 #include "i915_gem_region.h"
 #include "i915_globals.h"
+#include "i915_memcpy.h"
 #include "i915_trace.h"
 
 static struct i915_global_object {
@@ -447,6 +449,155 @@ err_put_donor:
 	i915_gem_object_put(donor);
 
 	return err;
+}
+
+struct object_memcpy_info {
+	struct drm_i915_gem_object *obj;
+	intel_wakeref_t wakeref;
+	bool write;
+	int clflush;
+	struct page *page;
+	void *vaddr;
+	void *(*get_vaddr)(struct object_memcpy_info *info,
+			   unsigned long idx);
+	void (*put_vaddr)(struct object_memcpy_info *info);
+};
+
+static
+void *lmem_get_vaddr(struct object_memcpy_info *info, unsigned long idx)
+{
+	info->vaddr = i915_gem_object_lmem_io_map_page(info->obj, idx);
+	return info->vaddr;
+}
+
+static
+void lmem_put_vaddr(struct object_memcpy_info *info)
+{
+	io_mapping_unmap(info->vaddr);
+}
+
+static
+void *smem_get_vaddr(struct object_memcpy_info *info, unsigned long idx)
+{
+	info->page = i915_gem_object_get_page(info->obj, (unsigned int)idx);
+	info->vaddr = kmap(info->page);
+	if (info->clflush & CLFLUSH_BEFORE)
+		drm_clflush_virt_range(info->vaddr, PAGE_SIZE);
+	return info->vaddr;
+}
+
+static
+void smem_put_vaddr(struct object_memcpy_info *info)
+{
+	if (info->clflush & CLFLUSH_AFTER)
+		drm_clflush_virt_range(info->vaddr, PAGE_SIZE);
+	kunmap(info->page);
+}
+
+static int
+i915_gem_object_prepare_memcpy(struct drm_i915_gem_object *obj,
+			       struct object_memcpy_info *info,
+			       bool write)
+{
+	struct drm_i915_private *i915 = to_i915(obj->base.dev);
+	int ret;
+
+	assert_object_held(obj);
+	ret = i915_gem_object_wait(obj,
+				   I915_WAIT_INTERRUPTIBLE,
+				   MAX_SCHEDULE_TIMEOUT);
+	if (ret)
+		return ret;
+
+	ret = i915_gem_object_pin_pages(obj);
+	if (ret)
+		return ret;
+
+	if (i915_gem_object_is_lmem(obj)) {
+		ret = i915_gem_object_set_to_wc_domain(obj, write);
+		if (!ret) {
+			info->wakeref =
+				intel_runtime_pm_get(&i915->runtime_pm);
+			info->get_vaddr = lmem_get_vaddr;
+			info->put_vaddr = lmem_put_vaddr;
+		}
+	} else {
+		if (write)
+			ret = i915_gem_object_prepare_write(obj,
+							    &info->clflush);
+		else
+			ret = i915_gem_object_prepare_read(obj,
+							   &info->clflush);
+
+		if (!ret) {
+			i915_gem_object_finish_access(obj);
+			info->get_vaddr = smem_get_vaddr;
+			info->put_vaddr = smem_put_vaddr;
+		}
+	}
+
+	if (!ret) {
+		info->obj = obj;
+		info->write = write;
+	} else {
+		i915_gem_object_unpin_pages(obj);
+	}
+
+	return ret;
+}
+
+static void
+i915_gem_object_finish_memcpy(struct object_memcpy_info *info)
+{
+	struct drm_i915_private *i915 = to_i915(info->obj->base.dev);
+
+	if (i915_gem_object_is_lmem(info->obj)) {
+		intel_runtime_pm_put(&i915->runtime_pm, info->wakeref);
+	} else {
+		if (info->write) {
+			i915_gem_object_flush_frontbuffer(info->obj,
+							  ORIGIN_CPU);
+			info->obj->mm.dirty = true;
+		}
+	}
+	i915_gem_object_unpin_pages(info->obj);
+}
+
+int i915_gem_object_memcpy(struct drm_i915_gem_object *dst,
+			   struct drm_i915_gem_object *src)
+{
+	struct object_memcpy_info sinfo, dinfo;
+	void *svaddr, *dvaddr;
+	unsigned long npages;
+	int i, ret;
+
+	ret = i915_gem_object_prepare_memcpy(src, &sinfo, false);
+	if (ret)
+		return ret;
+
+	ret = i915_gem_object_prepare_memcpy(dst, &dinfo, true);
+	if (ret)
+		goto finish_src;
+
+	npages = src->base.size / PAGE_SIZE;
+	for (i = 0; i < npages; i++) {
+		svaddr = sinfo.get_vaddr(&sinfo, i);
+		dvaddr = dinfo.get_vaddr(&dinfo, i);
+
+		/* a performance optimization */
+		if (!i915_gem_object_is_lmem(src) ||
+		    !i915_memcpy_from_wc(dvaddr, svaddr, PAGE_SIZE))
+			memcpy(dvaddr, svaddr, PAGE_SIZE);
+
+		dinfo.put_vaddr(&dinfo);
+		sinfo.put_vaddr(&sinfo);
+	}
+
+	i915_gem_object_finish_memcpy(&dinfo);
+finish_src:
+	i915_gem_object_finish_memcpy(&sinfo);
+
+	return ret;
 }
 
 static bool gpu_write_needs_clflush(struct drm_i915_gem_object *obj)
