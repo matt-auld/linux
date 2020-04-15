@@ -178,6 +178,8 @@ static void __i915_gem_free_object_rcu(struct rcu_head *head)
 		container_of(head, typeof(*obj), rcu);
 	struct drm_i915_private *i915 = to_i915(obj->base.dev);
 
+	/* Reset shared reservation object */
+	obj->base.resv = &obj->base._resv;
 	dma_resv_fini(&obj->base._resv);
 	i915_gem_object_free(obj);
 
@@ -185,7 +187,7 @@ static void __i915_gem_free_object_rcu(struct rcu_head *head)
 	atomic_dec(&i915->mm.free_count);
 }
 
-static void __i915_gem_object_free_mmaps(struct drm_i915_gem_object *obj)
+void __i915_gem_object_free_mmaps(struct drm_i915_gem_object *obj)
 {
 	/* Skip serialisation and waking the device if known to be not used. */
 
@@ -286,6 +288,14 @@ static void i915_gem_free_object(struct drm_gem_object *gem_obj)
 	struct drm_i915_private *i915 = to_i915(obj->base.dev);
 
 	GEM_BUG_ON(i915_gem_object_is_framebuffer(obj));
+
+	/*
+	 * If object had been swapped out, free the hidden object.
+	 */
+	if (obj->swapto) {
+		i915_gem_object_put(obj->swapto);
+		obj->swapto = NULL;
+	}
 
 	/*
 	 * Before we free the object, make sure any pure RCU-only

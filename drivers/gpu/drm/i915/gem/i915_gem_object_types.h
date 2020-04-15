@@ -316,6 +316,12 @@ struct drm_i915_gem_object {
 
 		void *gvt_info;
 	};
+
+	/**
+	 * object to swap-to if non-null.
+	 */
+	bool do_swapping;
+	struct drm_i915_gem_object *swapto;
 };
 
 static inline struct drm_i915_gem_object *

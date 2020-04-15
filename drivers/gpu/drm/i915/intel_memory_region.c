@@ -147,6 +147,11 @@ next:
 
 		mutex_unlock(&mem->objects.lock);
 
+		/* tell callee to do swapping */
+		if (i915_gem_object_type_has(obj, I915_GEM_OBJECT_HAS_IOMEM)
+		    && pass == 1)
+			obj->do_swapping = true;
+
 		if (!i915_gem_object_unbind(obj, I915_GEM_OBJECT_UNBIND_ACTIVE)) {
 			if (i915_gem_object_trylock(obj)) {
 				__i915_gem_object_put_pages(obj);
@@ -160,6 +165,7 @@ next:
 			}
 		}
 
+		obj->do_swapping = false;
 		i915_gem_object_put(obj);
 		mutex_lock(&mem->objects.lock);
 
