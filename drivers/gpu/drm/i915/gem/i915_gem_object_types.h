@@ -237,7 +237,6 @@ struct drm_i915_gem_object {
 		 * region->obj_lock.
 		 */
 		struct list_head region_link;
-		struct list_head tmp_link;
 
 		struct sg_table *pages;
 		void *mapping;

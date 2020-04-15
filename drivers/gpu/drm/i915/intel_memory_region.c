@@ -3,6 +3,7 @@
  * Copyright © 2019 Intel Corporation
  */
 
+#include "gt/intel_gt_requests.h"
 #include "intel_memory_region.h"
 #include "i915_drv.h"
 
@@ -94,6 +95,90 @@ __intel_memory_region_put_block_buddy(struct i915_buddy_block *block)
 	__intel_memory_region_put_pages_buddy(block->private, &blocks);
 }
 
+static int intel_memory_region_evict(struct intel_memory_region *mem,
+				     resource_size_t target)
+{
+	struct drm_i915_private *i915 = mem->i915;
+	struct list_head still_in_list;
+	struct drm_i915_gem_object *obj;
+	struct list_head *phases[] = {
+		&mem->objects.purgeable,
+		&mem->objects.list,
+		NULL,
+	};
+	struct list_head **phase;
+	resource_size_t found;
+	int pass;
+
+	intel_gt_retire_requests(&i915->gt);
+
+	found = 0;
+	pass = 0;
+	phase = phases;
+
+next:
+	INIT_LIST_HEAD(&still_in_list);
+	mutex_lock(&mem->objects.lock);
+
+	while (found < target &&
+		(obj = list_first_entry_or_null(*phase,
+						typeof(*obj),
+						mm.region_link))) {
+		list_move_tail(&obj->mm.region_link, &still_in_list);
+
+		if (!i915_gem_object_has_pages(obj))
+			continue;
+
+		if (i915_gem_object_is_framebuffer(obj))
+			continue;
+
+		/*
+		 * For IOMEM region, only swap user space objects.
+		 * kernel objects are bound and causes a lot of unbind
+		 * warning message in driver.
+		 * FIXME: swap kernel object as well.
+		 */
+		if (i915_gem_object_type_has(obj, I915_GEM_OBJECT_HAS_IOMEM)
+		    && !obj->base.handle_count)
+			continue;
+
+		if (!kref_get_unless_zero(&obj->base.refcount))
+			continue;
+
+		mutex_unlock(&mem->objects.lock);
+
+		if (!i915_gem_object_unbind(obj, I915_GEM_OBJECT_UNBIND_ACTIVE)) {
+			if (i915_gem_object_trylock(obj)) {
+				__i915_gem_object_put_pages(obj);
+				/* May arrive from get_pages on another bo */
+				if (!i915_gem_object_has_pages(obj)) {
+					found += obj->base.size;
+					if (obj->mm.madv == I915_MADV_DONTNEED)
+						obj->mm.madv = __I915_MADV_PURGED;
+				}
+				i915_gem_object_unlock(obj);
+			}
+		}
+
+		i915_gem_object_put(obj);
+		mutex_lock(&mem->objects.lock);
+
+		if (found >= target)
+			break;
+	}
+	list_splice_tail(&still_in_list, *phase);
+	mutex_unlock(&mem->objects.lock);
+
+	if (found < target) {
+		pass++;
+		phase++;
+		if (*phase)
+			goto next;
+	}
+
+	return (found < target) ? -ENOSPC : 0;
+}
+
 int
 __intel_memory_region_get_pages_buddy(struct intel_memory_region *mem,
 				      resource_size_t size,
@@ -137,7 +222,7 @@ __intel_memory_region_get_pages_buddy(struct intel_memory_region *mem,
 	do {
 		struct i915_buddy_block *block;
 		unsigned int order;
-		bool retry = true;
+
 retry:
 		order = min_t(u32, (fls(n_pages) - 1), max_order);
 		GEM_BUG_ON(order > mem->mm.max_order);
@@ -152,19 +237,15 @@ retry:
 				resource_size_t target;
 				int err;
 
-				if (!retry)
-					goto err_free_blocks;
-
 				target = n_pages * mem->mm.chunk_size;
 
 				mutex_unlock(&mem->mm_lock);
-				err = i915_gem_shrink_memory_region(mem,
-								    target);
+				err = intel_memory_region_evict(mem,
+								target);
 				mutex_lock(&mem->mm_lock);
 				if (err)
 					goto err_free_blocks;
 
-				retry = false;
 				goto retry;
 			}
 		} while (1);

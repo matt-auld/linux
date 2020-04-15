@@ -1093,7 +1093,8 @@ static void igt_mark_evictable(struct drm_i915_gem_object *obj)
 {
 	i915_gem_object_unpin_pages(obj);
 	obj->mm.madv = I915_MADV_DONTNEED;
-	list_move(&obj->mm.region_link, &obj->mm.region->objects.purgeable);
+	list_move_tail(&obj->mm.region_link,
+		       &obj->mm.region->objects.purgeable);
 }
 
 static int igt_mock_shrink(void *arg)

@@ -1008,12 +1008,12 @@ i915_gem_madvise_ioctl(struct drm_device *dev, void *data,
 
 		switch (obj->mm.madv) {
 		case I915_MADV_WILLNEED:
-			list_move(&obj->mm.region_link,
-				  &obj->mm.region->objects.list);
+			list_move_tail(&obj->mm.region_link,
+				       &obj->mm.region->objects.list);
 			break;
 		default:
-			list_move(&obj->mm.region_link,
-				  &obj->mm.region->objects.purgeable);
+			list_move_tail(&obj->mm.region_link,
+				       &obj->mm.region->objects.purgeable);
 			break;
 		}
 

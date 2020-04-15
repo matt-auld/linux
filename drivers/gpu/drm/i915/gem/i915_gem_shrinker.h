@@ -31,7 +31,5 @@ void i915_gem_driver_register__shrinker(struct drm_i915_private *i915);
 void i915_gem_driver_unregister__shrinker(struct drm_i915_private *i915);
 void i915_gem_shrinker_taints_mutex(struct drm_i915_private *i915,
 				    struct mutex *mutex);
-int i915_gem_shrink_memory_region(struct intel_memory_region *mem,
-				  resource_size_t target);
 
 #endif /* __I915_GEM_SHRINKER_H__ */
