@@ -100,6 +100,44 @@ static void __i915_vma_retire(struct i915_active *ref)
 	i915_vma_put(active_to_vma(ref));
 }
 
+struct i915_vma *
+i915_alloc_window_vma(struct drm_i915_private *i915,
+		      struct i915_address_space *vm, u64 size,
+		      u64 min_page_size)
+{
+	struct i915_vma *vma;
+
+	vma = i915_vma_alloc();
+	if (!vma)
+		return ERR_PTR(-ENOMEM);
+
+	kref_init(&vma->ref);
+	mutex_init(&vma->pages_mutex);
+	vma->vm = i915_vm_get(vm);
+	vma->ops = &vm->vma_ops;
+	vma->obj = NULL;
+	vma->resv = NULL;
+	vma->size = size;
+	vma->display_alignment = I915_GTT_MIN_ALIGNMENT;
+	vma->page_sizes.sg = min_page_size;
+
+	i915_active_init(&vma->active, __i915_vma_active, __i915_vma_retire);
+	INIT_LIST_HEAD(&vma->closed_link);
+
+	GEM_BUG_ON(!IS_ALIGNED(vma->size, I915_GTT_PAGE_SIZE));
+	GEM_BUG_ON(i915_is_ggtt(vm));
+
+	return vma;
+}
+
+void i915_destroy_window_vma(struct i915_vma *vma)
+{
+	i915_active_fini(&vma->active);
+	i915_vm_put(vma->vm);
+	mutex_destroy(&vma->pages_mutex);
+	i915_vma_free(vma);
+}
+
 static struct i915_vma *
 vma_create(struct drm_i915_gem_object *obj,
 	   struct i915_address_space *vm,
