@@ -506,6 +506,10 @@ static inline bool i915_ggtt_has_aperture(const struct i915_ggtt *ggtt)
 	return ggtt->mappable_end > 0;
 }
 
+void intel_partial_pages_for_sg_table(struct drm_i915_gem_object *obj,
+				      struct sg_table *st,
+				      u32 obj_offset, u32 page_count,
+				      struct scatterlist **sgl);
 int i915_ppgtt_init_hw(struct intel_gt *gt);
 
 struct i915_ppgtt *i915_ppgtt_create(struct intel_gt *gt);

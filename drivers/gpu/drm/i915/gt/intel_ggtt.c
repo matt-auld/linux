@@ -1383,25 +1383,17 @@ err_st_alloc:
 	return ERR_PTR(ret);
 }
 
-static noinline struct sg_table *
-intel_partial_pages(const struct i915_ggtt_view *view,
-		    struct drm_i915_gem_object *obj)
+void intel_partial_pages_for_sg_table(struct drm_i915_gem_object *obj,
+				      struct sg_table *st,
+				      u32 obj_offset, u32 page_count,
+				      struct scatterlist **sgl)
 {
-	struct sg_table *st;
 	struct scatterlist *sg, *iter;
-	unsigned int count = view->partial.size;
 	unsigned int offset;
-	int ret = -ENOMEM;
 
-	st = kmalloc(sizeof(*st), GFP_KERNEL);
-	if (!st)
-		goto err_st_alloc;
+	GEM_BUG_ON(!st);
 
-	ret = sg_alloc_table(st, count, GFP_KERNEL);
-	if (ret)
-		goto err_sg_alloc;
-
-	iter = i915_gem_object_get_sg_dma(obj, view->partial.offset, &offset, true);
+	iter = i915_gem_object_get_sg_dma(obj, obj_offset, &offset, true);
 	GEM_BUG_ON(!iter);
 
 	sg = st->sgl;
@@ -1410,30 +1402,51 @@ intel_partial_pages(const struct i915_ggtt_view *view,
 		unsigned int len;
 
 		len = min(sg_dma_len(iter) - (offset << PAGE_SHIFT),
-			  count << PAGE_SHIFT);
+			  page_count << PAGE_SHIFT);
+
 		sg_set_page(sg, NULL, len, 0);
 		sg_dma_address(sg) =
 			sg_dma_address(iter) + (offset << PAGE_SHIFT);
 		sg_dma_len(sg) = len;
 
 		st->nents++;
-		count -= len >> PAGE_SHIFT;
-		if (count == 0) {
+		page_count -= len >> PAGE_SHIFT;
+		if (page_count == 0) {
 			sg_mark_end(sg);
-			i915_sg_trim(st); /* Drop any unused tail entries. */
+			if (sgl)
+				*sgl = sg;
 
-			return st;
+			return;
 		}
 
 		sg = __sg_next(sg);
 		iter = __sg_next(iter);
 		offset = 0;
 	} while (1);
+}
 
-err_sg_alloc:
-	kfree(st);
-err_st_alloc:
-	return ERR_PTR(ret);
+static noinline struct sg_table *
+intel_partial_pages(const struct i915_ggtt_view *view,
+		    struct drm_i915_gem_object *obj)
+{
+	struct sg_table *st;
+	int ret;
+
+	st = kmalloc(sizeof(*st), GFP_KERNEL);
+	if (!st)
+		return ERR_PTR(-ENOMEM);
+
+	ret = sg_alloc_table(st, view->partial.size, GFP_KERNEL);
+	if (ret) {
+		kfree(st);
+		return ERR_PTR(ret);
+	}
+
+	intel_partial_pages_for_sg_table(obj, st, view->partial.offset,
+					 view->partial.size, NULL);
+	i915_sg_trim(st);
+
+	return st;
 }
 
 static int
