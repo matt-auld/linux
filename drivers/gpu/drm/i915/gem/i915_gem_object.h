@@ -598,4 +598,9 @@ static inline int i915_gem_object_userptr_submit_done(struct drm_i915_gem_object
 static inline void i915_gem_object_userptr_submit_fini(struct drm_i915_gem_object *obj) { GEM_BUG_ON(1); }
 #endif
 
+int i915_window_blt_copy(struct drm_i915_gem_object *dst,
+			 struct drm_i915_gem_object *src);
+int i915_setup_blt_windows(struct drm_i915_private *i915);
+void i915_teardown_blt_windows(struct drm_i915_private *i915);
+
 #endif

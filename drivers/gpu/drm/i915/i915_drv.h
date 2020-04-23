@@ -595,6 +595,12 @@ struct i915_gem_mm {
 	/* shrinker accounting, also useful for userland debugging */
 	u64 shrink_memory;
 	u32 shrink_count;
+
+	struct i915_vma *lmem_window[2];
+	struct i915_vma *smem_window[2];
+
+	/* To protect above two set of vmas */
+	struct mutex window_mutex;
 };
 
 #define I915_IDLE_ENGINES_TIMEOUT (200) /* in ms */
