@@ -322,6 +322,9 @@ struct drm_i915_gem_object {
 	 */
 	bool do_swapping;
 	struct drm_i915_gem_object *swapto;
+
+	/** mark evicted object during suspend */
+	bool evicted;
 };
 
 static inline struct drm_i915_gem_object *

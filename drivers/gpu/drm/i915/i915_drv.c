@@ -1102,11 +1102,86 @@ static int i915_drm_prepare(struct drm_device *dev)
 	return 0;
 }
 
+static int intel_dmem_evict_buffers(struct drm_device *dev, bool in_suspend)
+{
+	struct drm_i915_private *i915 = to_i915(dev);
+	struct drm_i915_gem_object *obj;
+	struct intel_memory_region *mem;
+	int id, ret = 0;
+
+	/*
+	 * FIXME: Presently using memcpy,
+	 * will replace with blitter once
+	 * fix the issues.
+	 */
+	i915->params.enable_eviction = 1;
+
+	for_each_memory_region(mem, i915, id) {
+		struct list_head still_in_list;
+		INIT_LIST_HEAD(&still_in_list);
+		if (mem->type == INTEL_MEMORY_LOCAL && mem->total) {
+			mutex_lock(&mem->objects.lock);
+			while ((obj =  list_first_entry_or_null(&mem->objects.list,
+						typeof(*obj),
+						mm.region_link))) {
+
+				list_move_tail(&obj->mm.region_link, &still_in_list);
+
+				if (!i915_gem_object_has_pages(obj) && in_suspend)
+					continue;
+
+				/* Ignore previously evicted objects */
+				if (obj->swapto && in_suspend)
+					continue;
+
+				mutex_unlock(&mem->objects.lock);
+
+				if (in_suspend)
+					i915_gem_object_unbind(obj, 0);
+
+				if (in_suspend) {
+					obj->swapto = NULL;
+					obj->evicted = false;
+					obj->do_swapping = true;
+					ret = __i915_gem_object_put_pages(obj);
+					obj->do_swapping = false;
+					if (ret) {
+						/*
+						 * FIXME: internal ctx objects still pinned
+						 * returning as BUSY. Presently just evicting
+						 * the user objects, will fix it later
+						 */
+						obj->evicted = false;
+						ret = 0;
+					} else
+						obj->evicted = true;
+				} else {
+					if (obj->swapto && obj->evicted) {
+						ret = i915_gem_object_pin_pages(obj);
+						if (ret) {
+							i915_gem_object_put(obj);
+						} else {
+							i915_gem_object_unpin_pages(obj);
+							obj->evicted = false;
+						}
+					}
+				}
+				mutex_lock(&mem->objects.lock);
+			}
+			list_splice_tail(&still_in_list, &mem->objects.list);
+			mutex_unlock(&mem->objects.lock);
+		}
+	}
+	i915->params.enable_eviction = 3;
+	return ret;
+}
+
 static int i915_drm_suspend(struct drm_device *dev)
 {
 	struct drm_i915_private *dev_priv = to_i915(dev);
 	struct pci_dev *pdev = dev_priv->drm.pdev;
 	pci_power_t opregion_target_state;
+	int ret = 0;
 
 	disable_rpm_wakeref_asserts(&dev_priv->runtime_pm);
 
@@ -1137,6 +1212,10 @@ static int i915_drm_suspend(struct drm_device *dev)
 	intel_opregion_suspend(dev_priv, opregion_target_state);
 
 	intel_fbdev_set_suspend(dev, FBINFO_STATE_SUSPENDED, true);
+
+	ret = intel_dmem_evict_buffers(dev, true);
+	if (ret)
+		return ret;
 
 	dev_priv->suspend_count++;
 
@@ -1262,6 +1341,10 @@ static int i915_drm_resume(struct drm_device *dev)
 	intel_runtime_pm_enable_interrupts(dev_priv);
 
 	drm_mode_config_reset(dev);
+
+	ret = intel_dmem_evict_buffers(dev, false);
+	if (ret)
+		DRM_ERROR("i915_resume:i915_gem_object_pin_pages failed with err=%d\n", ret);
 
 	i915_gem_resume(dev_priv);
 
