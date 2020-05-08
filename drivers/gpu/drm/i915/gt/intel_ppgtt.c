@@ -9,6 +9,8 @@
 #include "intel_gtt.h"
 #include "gem/i915_gem_lmem.h"
 #include "gem/i915_gem_region.h"
+#include "gem/i915_gem_context.h"
+#include "gem/i915_gem_region.h"
 #include "gen6_ppgtt.h"
 #include "gen8_ppgtt.h"
 
@@ -317,3 +319,5 @@ void ppgtt_init(struct i915_ppgtt *ppgtt, struct intel_gt *gt)
 	ppgtt->vm.vma_ops.set_pages   = ppgtt_set_pages;
 	ppgtt->vm.vma_ops.clear_pages = clear_pages;
 }
+
+

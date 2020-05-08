@@ -64,6 +64,7 @@
 #include "gem/i915_gem_context.h"
 #include "gem/i915_gem_ioctls.h"
 #include "gem/i915_gem_mman.h"
+#include "gt/gen8_ppgtt.h"
 #include "gt/intel_gt.h"
 #include "gt/intel_gt_pm.h"
 #include "gt/intel_rc6.h"
@@ -1136,13 +1137,13 @@ static int intel_dmem_evict_buffers(struct drm_device *dev, bool in_suspend)
 
 				mutex_unlock(&mem->objects.lock);
 
-				if (in_suspend)
-					i915_gem_object_unbind(obj, 0);
-
 				if (in_suspend) {
 					obj->swapto = NULL;
 					obj->evicted = false;
 					obj->do_swapping = true;
+
+					i915_gem_object_unbind(obj, 0);
+
 					ret = __i915_gem_object_put_pages(obj);
 					obj->do_swapping = false;
 					if (ret) {
@@ -1173,6 +1174,43 @@ static int intel_dmem_evict_buffers(struct drm_device *dev, bool in_suspend)
 		}
 	}
 	i915->params.enable_eviction = 3;
+	return ret;
+}
+
+static int i915_gem_suspend_ppgtt_mappings(struct drm_i915_private *i915)
+{
+	struct i915_gem_context *ctx, *cn;
+	int ret;
+
+	spin_lock(&i915->gem.contexts.lock);
+	list_for_each_entry_safe(ctx, cn, &i915->gem.contexts.list, link) {
+		struct i915_address_space *vm;
+
+		if (!kref_get_unless_zero(&ctx->ref))
+			continue;
+		spin_unlock(&i915->gem.contexts.lock);
+
+		vm = i915_gem_context_get_vm_rcu(ctx);
+		mutex_lock(&vm->mutex);
+		ret = i915_gem_evict_vm(vm);
+		mutex_unlock(&vm->mutex);
+		if (ret) {
+			GEM_WARN_ON(ret);
+			i915_vm_put(vm);
+			i915_gem_context_put(ctx);
+			return ret;
+		}
+		i915_vm_put(vm);
+		spin_lock(&i915->gem.contexts.lock);
+		list_safe_reset_next(ctx, cn, link);
+		i915_gem_context_put(ctx);
+	}
+	spin_unlock(&i915->gem.contexts.lock);
+
+	mutex_lock(&i915->gt.vm->mutex);
+	ret = i915_gem_evict_vm(i915->gt.vm);
+	mutex_unlock(&i915->gt.vm->mutex);
+
 	return ret;
 }
 
@@ -1213,9 +1251,17 @@ static int i915_drm_suspend(struct drm_device *dev)
 
 	intel_fbdev_set_suspend(dev, FBINFO_STATE_SUSPENDED, true);
 
-	ret = intel_dmem_evict_buffers(dev, true);
-	if (ret)
-		return ret;
+	if (HAS_LMEM(dev_priv))	{
+		ret = intel_dmem_evict_buffers(dev, true);
+		if (ret)
+			return ret;
+
+		i915_teardown_blt_windows(dev_priv);
+
+		ret = i915_gem_suspend_ppgtt_mappings(dev_priv);
+		if (ret)
+			return ret;
+	}
 
 	dev_priv->suspend_count++;
 
@@ -1306,6 +1352,36 @@ int i915_suspend_switcheroo(struct drm_i915_private *i915, pm_message_t state)
 	return i915_drm_suspend_late(&i915->drm, false);
 }
 
+static void i915_gem_restore_ppgtt_mappings(struct drm_i915_private *i915)
+{
+	struct i915_gem_context *ctx, *cn;
+
+	spin_lock(&i915->gem.contexts.lock);
+
+	list_for_each_entry_safe(ctx, cn, &i915->gem.contexts.list, link) {
+		struct i915_address_space *vm;
+
+		if (!kref_get_unless_zero(&ctx->ref))
+			continue;
+
+		spin_unlock(&i915->gem.contexts.lock);
+
+		vm = i915_gem_context_get_vm_rcu(ctx);
+		mutex_lock(&vm->mutex);
+		gen8_restore_ppgtt_mappings(vm);
+		mutex_unlock(&vm->mutex);
+		i915_vm_put(vm);
+		spin_lock(&i915->gem.contexts.lock);
+		list_safe_reset_next(ctx, cn, link);
+		i915_gem_context_put(ctx);
+	}
+	spin_unlock(&i915->gem.contexts.lock);
+
+	mutex_lock(&i915->gt.vm->mutex);
+	gen8_restore_ppgtt_mappings(i915->gt.vm);
+	mutex_unlock(&i915->gt.vm->mutex);
+}
+
 static int i915_drm_resume(struct drm_device *dev)
 {
 	struct drm_i915_private *dev_priv = to_i915(dev);
@@ -1342,9 +1418,17 @@ static int i915_drm_resume(struct drm_device *dev)
 
 	drm_mode_config_reset(dev);
 
-	ret = intel_dmem_evict_buffers(dev, false);
-	if (ret)
-		DRM_ERROR("i915_resume:i915_gem_object_pin_pages failed with err=%d\n", ret);
+	if (HAS_LMEM(dev_priv)) {
+		i915_gem_restore_ppgtt_mappings(dev_priv);
+
+		ret = i915_setup_blt_windows(dev_priv);
+		if (ret)
+			GEM_BUG_ON(ret);
+
+		ret = intel_dmem_evict_buffers(dev, false);
+		if (ret)
+			DRM_ERROR("i915_resume:i915_gem_object_pin_pages failed with err=%d\n", ret);
+	}
 
 	i915_gem_resume(dev_priv);
 

@@ -775,3 +775,16 @@ err_free:
 	kfree(ppgtt);
 	return ERR_PTR(err);
 }
+
+void gen8_restore_ppgtt_mappings(struct i915_address_space *vm)
+{
+	const unsigned int count = gen8_pd_top_count(vm);
+	int i;
+
+	for (i = 1; i <= vm->top; i++)
+		fill_px(vm->scratch[i], vm->scratch[i - 1]->encode);
+
+	fill_page_dma(px_base(i915_vm_to_ppgtt(vm)->pd),
+		      vm->scratch[vm->top]->encode, count);
+}
+
