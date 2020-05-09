@@ -92,6 +92,7 @@ struct intel_memory_region {
 	enum intel_region_id id;
 	char name[8];
 	struct intel_gt *gt; /* GT closest to this region. */
+	bool is_devmem;	/* true for device memory */
 
 	dma_addr_t remap_addr;
 
