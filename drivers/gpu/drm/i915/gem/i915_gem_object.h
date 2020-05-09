@@ -51,7 +51,16 @@ void i915_gem_object_put_pages_phys(struct drm_i915_gem_object *obj,
 				    struct sg_table *pages);
 
 
+enum intel_region_id;
+int i915_gem_object_prepare_move(struct drm_i915_gem_object *obj);
+int i915_gem_object_migrate(struct drm_i915_gem_object *obj,
+			    struct i915_gem_ww_ctx *ww,
+			    struct intel_context *ce,
+			    enum intel_region_id id);
+
 void i915_gem_flush_free_objects(struct drm_i915_private *i915);
+
+void __i915_gem_object_reset_page_iter(struct drm_i915_gem_object *obj);
 
 struct sg_table *
 __i915_gem_object_unset_pages(struct drm_i915_gem_object *obj);

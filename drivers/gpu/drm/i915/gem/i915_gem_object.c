@@ -26,11 +26,14 @@
 
 #include "display/intel_frontbuffer.h"
 #include "gt/intel_gt.h"
+#include "gt/intel_gt_requests.h"
 #include "i915_drv.h"
 #include "i915_gem_clflush.h"
 #include "i915_gem_context.h"
 #include "i915_gem_mman.h"
 #include "i915_gem_object.h"
+#include "i915_gem_object_blt.h"
+#include "i915_gem_region.h"
 #include "i915_globals.h"
 #include "i915_trace.h"
 
@@ -309,6 +312,128 @@ static void i915_gem_free_object(struct drm_gem_object *gem_obj)
 	 */
 	if (llist_add(&obj->freed, &i915->mm.free_list))
 		queue_work(i915->wq, &i915->mm.free_work);
+}
+
+int i915_gem_object_prepare_move(struct drm_i915_gem_object *obj)
+{
+	int err;
+
+	assert_object_held(obj);
+
+	if (obj->mm.madv != I915_MADV_WILLNEED)
+		return -EINVAL;
+
+	if (i915_gem_object_needs_bit17_swizzle(obj))
+		return -EINVAL;
+
+	if (i915_gem_object_is_framebuffer(obj))
+		return -EBUSY;
+
+	i915_gem_object_release_mmap(obj);
+
+	GEM_BUG_ON(obj->mm.mapping);
+	GEM_BUG_ON(obj->base.filp && mapping_mapped(obj->base.filp->f_mapping));
+
+	err = i915_gem_object_wait(obj,
+				   I915_WAIT_INTERRUPTIBLE |
+				   I915_WAIT_ALL,
+				   MAX_SCHEDULE_TIMEOUT);
+	if (err)
+		return err;
+
+	return i915_gem_object_unbind(obj,
+				      I915_GEM_OBJECT_UNBIND_ACTIVE);
+}
+
+int i915_gem_object_migrate(struct drm_i915_gem_object *obj,
+			    struct i915_gem_ww_ctx *ww,
+			    struct intel_context *ce,
+			    enum intel_region_id id)
+{
+	struct drm_i915_private *i915 = to_i915(obj->base.dev);
+	struct drm_i915_gem_object *donor;
+	struct intel_memory_region *mem;
+	struct sg_table *pages = NULL;
+	unsigned int page_sizes;
+	int err = 0;
+
+	assert_object_held(obj);
+	GEM_BUG_ON(id >= INTEL_REGION_UNKNOWN);
+	GEM_BUG_ON(obj->mm.madv != I915_MADV_WILLNEED);
+	if (obj->mm.region->id == id)
+		return 0;
+
+	mem = i915->mm.regions[id];
+
+	donor = i915_gem_object_create_region(mem, obj->base.size, 0);
+	if (IS_ERR(donor)) {
+		err = PTR_ERR(donor);
+		return err;
+	}
+
+	err = i915_gem_object_lock(donor, ww);
+	if (err)
+		goto err_put_donor;
+
+	/* Copy backing-pages if we have to */
+	if (i915_gem_object_has_pages(obj) ||
+	    obj->base.filp) {
+		err = i915_gem_object_ww_copy_blt(obj, donor, ww, ce);
+		if (err)
+			goto unlock_donor;
+	}
+
+	err = i915_gem_object_set_to_cpu_domain(donor, false);
+	if (err)
+		goto unlock_donor;
+
+	intel_gt_retire_requests(&i915->gt);
+
+	i915_gem_object_unbind(donor, 0);
+	err = i915_gem_object_unbind(obj, 0);
+	if (err)
+		goto unlock_donor;
+
+	pages = __i915_gem_object_unset_pages(obj);
+	if (pages)
+		obj->ops->put_pages(obj, pages);
+
+	page_sizes = donor->mm.page_sizes.phys;
+	pages = __i915_gem_object_unset_pages(donor);
+
+	if (obj->ops->release)
+		obj->ops->release(obj);
+
+	/* We need still need a little special casing for shmem */
+	if (obj->base.filp)
+		fput(fetch_and_zero(&obj->base.filp));
+	else if (donor->base.filp) {
+		atomic_long_inc(&donor->base.filp->f_count);
+		obj->base.filp = donor->base.filp;
+	}
+
+	obj->base.size = donor->base.size;
+	obj->mm.region = intel_memory_region_get(mem);
+	obj->flags = donor->flags;
+	obj->ops = donor->ops;
+	obj->cache_level = donor->cache_level;
+	obj->cache_coherent = donor->cache_coherent;
+	obj->cache_dirty = donor->cache_dirty;
+
+	list_replace_init(&donor->mm.blocks, &obj->mm.blocks);
+
+	/* set pages after migrated */
+	if (pages)
+		__i915_gem_object_set_pages(obj, pages, page_sizes);
+
+	GEM_BUG_ON(i915_gem_object_has_pages(donor));
+	GEM_BUG_ON(i915_gem_object_has_pinned_pages(donor));
+unlock_donor:
+	i915_gem_ww_unlock_single(donor);
+err_put_donor:
+	i915_gem_object_put(donor);
+
+	return err;
 }
 
 static bool gpu_write_needs_clflush(struct drm_i915_gem_object *obj)
