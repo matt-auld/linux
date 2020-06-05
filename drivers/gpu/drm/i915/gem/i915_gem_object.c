@@ -381,6 +381,17 @@ int i915_gem_object_migrate(struct drm_i915_gem_object *obj,
 		err = i915_gem_object_ww_copy_blt(obj, donor, ww, ce);
 		if (err)
 			goto unlock_donor;
+
+		/*
+		 * Occasionally i915_gem_object_wait() called inside
+		 * i915_gem_object_set_to_cpu_domain() get interrupted
+		 * and return -ERESTARTSYS, this will make migration
+		 * operation fail. So adding a non-interruptible wait
+		 * before changing the object domain.
+		 */
+		err = i915_gem_object_wait(donor, 0, MAX_SCHEDULE_TIMEOUT);
+		if (err)
+			goto unlock_donor;
 	}
 
 	err = i915_gem_object_set_to_cpu_domain(donor, false);
