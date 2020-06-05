@@ -1028,6 +1028,8 @@ int i915_window_blt_copy(struct drm_i915_gem_object *dst,
 
 	spin_unlock(&i915->mm.window_queue.lock);
 
+	intel_engine_pm_get(ce->engine);
+
 	do {
 		struct i915_request *rq;
 		long timeout;
@@ -1079,6 +1081,8 @@ int i915_window_blt_copy(struct drm_i915_gem_object *dst,
 
 		flush_work(&ce->engine->retire_work);
 	} while (remain);
+
+	intel_engine_pm_put(ce->engine);
 
 	spin_lock(&i915->mm.window_queue.lock);
 	src_vma->size = BLT_WINDOW_SZ;
