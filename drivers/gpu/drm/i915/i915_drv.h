@@ -600,7 +600,7 @@ struct i915_gem_mm {
 	struct i915_vma *smem_window[2];
 
 	/* To protect above two set of vmas */
-	struct mutex window_mutex;
+	wait_queue_head_t window_queue;
 };
 
 #define I915_IDLE_ENGINES_TIMEOUT (200) /* in ms */
