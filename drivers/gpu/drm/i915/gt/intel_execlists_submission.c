@@ -4697,7 +4697,13 @@ static int __execlists_context_alloc(struct intel_context *ce,
 		context_size += PAGE_SIZE;
 	}
 
-	if (HAS_LMEM(engine->i915)) {
+	/* FIXME: temporary fix for allocating default ctx objects
+	 * in SMEM, to reslove suspend/resume issues while using
+	 * blitter based eviction. Will remove this once the upstream
+	 * changes merged, where default obj's stored using shmemfs file.
+	 */
+	if (HAS_LMEM(engine->i915) &&
+	    (!IS_DG1(engine->i915) || engine->default_state)) {
 		ctx_obj = i915_gem_object_create_lmem(engine->i915,
 						      context_size,
 						      I915_BO_ALLOC_CONTIGUOUS);
@@ -4707,16 +4713,18 @@ static int __execlists_context_alloc(struct intel_context *ce,
 	if (IS_ERR(ctx_obj))
 		return PTR_ERR(ctx_obj);
 
-	if (HAS_LMEM(engine->i915)) {
+	i915_gem_object_lock_isolated(ctx_obj);
+	if (HAS_LMEM(engine->i915) &&
+	    (!IS_DG1(engine->i915) || engine->default_state)) {
 		ret = context_clear_lmem(ctx_obj);
 		if (ret)
-			goto error_deref_obj;
+			goto error_unlock;
 	}
 
 	vma = i915_vma_instance(ctx_obj, &engine->gt->ggtt->vm, NULL);
 	if (IS_ERR(vma)) {
 		ret = PTR_ERR(vma);
-		goto error_deref_obj;
+		goto error_unlock;
 	}
 
 	if (!page_mask_bits(ce->timeline)) {
@@ -4732,7 +4740,7 @@ static int __execlists_context_alloc(struct intel_context *ce,
 			tl = intel_timeline_create(engine->gt);
 		if (IS_ERR(tl)) {
 			ret = PTR_ERR(tl);
-			goto error_deref_obj;
+			goto error_unlock;
 		}
 
 		ce->timeline = tl;
@@ -4741,15 +4749,18 @@ static int __execlists_context_alloc(struct intel_context *ce,
 	ring = intel_engine_create_ring(engine, (unsigned long)ce->ring);
 	if (IS_ERR(ring)) {
 		ret = PTR_ERR(ring);
-		goto error_deref_obj;
+		goto error_unlock;
 	}
 
 	ce->ring = ring;
 	ce->state = vma;
 
+	i915_gem_object_unlock(ctx_obj);
+
 	return 0;
 
-error_deref_obj:
+error_unlock:
+	i915_gem_object_unlock(ctx_obj);
 	i915_gem_object_put(ctx_obj);
 	return ret;
 }
