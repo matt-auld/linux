@@ -767,7 +767,7 @@ static struct i915_vma *
 i915_window_vma_init(struct drm_i915_private *i915,
 		     struct intel_memory_region *mem)
 {
-	struct intel_context *ce = i915->gt.engine[BCS0]->blitter_context;
+	struct intel_context *ce = i915->gt.engine[BCS0]->evict_context;
 	struct i915_address_space *vm = ce->vm;
 	struct i915_vma *vma;
 	int ret;
@@ -984,7 +984,7 @@ int i915_window_blt_copy(struct drm_i915_gem_object *dst,
 			 struct drm_i915_gem_object *src)
 {
 	struct drm_i915_private *i915 = to_i915(src->base.dev);
-	struct intel_context *ce = i915->gt.engine[BCS0]->blitter_context;
+	struct intel_context *ce = i915->gt.engine[BCS0]->evict_context;
 	bool src_is_lmem = i915_gem_object_is_lmem(src);
 	bool dst_is_lmem = i915_gem_object_is_lmem(dst);
 	u64 remain = src->base.size, offset = 0;

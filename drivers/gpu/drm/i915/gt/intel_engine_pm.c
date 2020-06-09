@@ -66,10 +66,13 @@ static int __engine_unpark(struct intel_wakeref *wf)
 		ce->ops->reset(ce);
 	}
 
-	if (engine->class == COPY_ENGINE_CLASS) {
-		ce = engine->blitter_context;
+	ce = engine->blitter_context;
+	if (ce)
 		ce->ops->reset(ce);
-	}
+
+	ce = engine->evict_context;
+	if (ce)
+		ce->ops->reset(ce);
 
 	if (engine->unpark)
 		engine->unpark(engine);
