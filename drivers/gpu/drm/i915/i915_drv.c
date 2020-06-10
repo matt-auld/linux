@@ -1110,13 +1110,6 @@ static int intel_dmem_evict_buffers(struct drm_device *dev, bool in_suspend)
 	struct intel_memory_region *mem;
 	int id, ret = 0;
 
-	/*
-	 * FIXME: Presently using memcpy,
-	 * will replace with blitter once
-	 * fix the issues.
-	 */
-	i915->params.enable_eviction = 1;
-
 	for_each_memory_region(mem, i915, id) {
 		struct list_head still_in_list;
 		INIT_LIST_HEAD(&still_in_list);
@@ -1173,7 +1166,6 @@ static int intel_dmem_evict_buffers(struct drm_device *dev, bool in_suspend)
 			mutex_unlock(&mem->objects.lock);
 		}
 	}
-	i915->params.enable_eviction = 3;
 	return ret;
 }
 
@@ -1235,6 +1227,18 @@ static int i915_drm_suspend(struct drm_device *dev)
 
 	intel_dp_mst_suspend(dev_priv);
 
+	if (HAS_LMEM(dev_priv))	{
+		ret = intel_dmem_evict_buffers(dev, true);
+		if (ret)
+			return ret;
+
+		i915_teardown_blt_windows(dev_priv);
+
+		ret = i915_gem_suspend_ppgtt_mappings(dev_priv);
+		if (ret)
+			return ret;
+	}
+
 	intel_runtime_pm_disable_interrupts(dev_priv);
 	intel_hpd_cancel_work(dev_priv);
 
@@ -1250,18 +1254,6 @@ static int i915_drm_suspend(struct drm_device *dev)
 	intel_opregion_suspend(dev_priv, opregion_target_state);
 
 	intel_fbdev_set_suspend(dev, FBINFO_STATE_SUSPENDED, true);
-
-	if (HAS_LMEM(dev_priv))	{
-		ret = intel_dmem_evict_buffers(dev, true);
-		if (ret)
-			return ret;
-
-		i915_teardown_blt_windows(dev_priv);
-
-		ret = i915_gem_suspend_ppgtt_mappings(dev_priv);
-		if (ret)
-			return ret;
-	}
 
 	dev_priv->suspend_count++;
 
@@ -1418,6 +1410,8 @@ static int i915_drm_resume(struct drm_device *dev)
 
 	drm_mode_config_reset(dev);
 
+	i915_gem_resume(dev_priv);
+
 	if (HAS_LMEM(dev_priv)) {
 		i915_gem_restore_ppgtt_mappings(dev_priv);
 
@@ -1429,8 +1423,6 @@ static int i915_drm_resume(struct drm_device *dev)
 		if (ret)
 			DRM_ERROR("i915_resume:i915_gem_object_pin_pages failed with err=%d\n", ret);
 	}
-
-	i915_gem_resume(dev_priv);
 
 	intel_modeset_init_hw(dev_priv);
 	intel_init_clock_gating(dev_priv);
