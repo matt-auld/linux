@@ -1103,7 +1103,54 @@ static int i915_drm_prepare(struct drm_device *dev)
 	return 0;
 }
 
-static int intel_dmem_evict_buffers(struct drm_device *dev, bool in_suspend)
+static int i915_gem_perma_pinned_object_swapout(struct drm_i915_gem_object *obj)
+{
+	struct drm_i915_private *i915 = to_i915(obj->base.dev);
+	struct drm_i915_gem_object *dst;
+	int err = -EINVAL;
+
+	assert_object_held(obj);
+	dst = i915_gem_object_create_shmem(i915, obj->base.size);
+	if (IS_ERR(dst))
+		return PTR_ERR(dst);
+
+	i915_gem_object_lock_isolated(dst);
+	err = i915_gem_object_memcpy(dst, obj);
+	i915_gem_object_unlock(dst);
+
+	if (!err) {
+		obj->swapto = dst;
+		obj->evicted = true;
+	} else
+		i915_gem_object_put(dst);
+
+	return err;
+}
+
+static int i915_gem_perma_pinned_object_swapin(struct drm_i915_gem_object *obj)
+{
+	struct drm_i915_gem_object *src;
+	int err = -EINVAL;
+
+	assert_object_held(obj);
+	src = obj->swapto;
+
+	if (WARN_ON(!i915_gem_object_trylock(src)))
+		return -EBUSY;
+
+	err = i915_gem_object_memcpy(obj, src);
+	i915_gem_object_unlock(src);
+
+	if (!err) {
+		obj->swapto = NULL;
+		obj->evicted = false;
+		i915_gem_object_put(src);
+	}
+	return err;
+}
+
+static int intel_dmem_evict_buffers(struct drm_device *dev, bool in_suspend,
+				    bool perma_pin)
 {
 	struct drm_i915_private *i915 = to_i915(dev);
 	struct drm_i915_gem_object *obj;
@@ -1133,24 +1180,37 @@ static int intel_dmem_evict_buffers(struct drm_device *dev, bool in_suspend)
 				if (in_suspend) {
 					obj->swapto = NULL;
 					obj->evicted = false;
+
+					ret = i915_gem_object_unbind(obj, 0);
+					if (ret || i915_gem_object_has_pinned_pages(obj)) {
+						if (!i915_gem_object_trylock(obj)) {
+							ret = -EBUSY;
+							goto next;
+						}
+						ret = i915_gem_perma_pinned_object_swapout(obj);
+						i915_gem_object_unlock(obj);
+						goto next;
+					}
+
 					obj->do_swapping = true;
-
-					i915_gem_object_unbind(obj, 0);
-
 					ret = __i915_gem_object_put_pages(obj);
 					obj->do_swapping = false;
-					if (ret) {
-						/*
-						 * FIXME: internal ctx objects still pinned
-						 * returning as BUSY. Presently just evicting
-						 * the user objects, will fix it later
-						 */
+					if (ret)
 						obj->evicted = false;
-						ret = 0;
-					} else
+					else
 						obj->evicted = true;
 				} else {
-					if (obj->swapto && obj->evicted) {
+					if (i915_gem_object_has_pinned_pages(obj) && perma_pin) {
+						if (!i915_gem_object_trylock(obj)) {
+							ret = -EBUSY;
+							goto next;
+						}
+						ret = i915_gem_perma_pinned_object_swapin(obj);
+						/* FIXME: Where is this error message taken care of? */
+						i915_gem_object_unlock(obj);
+					}
+
+					if (obj->swapto && obj->evicted && !perma_pin) {
 						ret = i915_gem_object_pin_pages(obj);
 						if (ret) {
 							i915_gem_object_put(obj);
@@ -1160,7 +1220,10 @@ static int intel_dmem_evict_buffers(struct drm_device *dev, bool in_suspend)
 						}
 					}
 				}
+next:
 				mutex_lock(&mem->objects.lock);
+				if (ret)
+					break;
 			}
 			list_splice_tail(&still_in_list, &mem->objects.list);
 			mutex_unlock(&mem->objects.lock);
@@ -1228,7 +1291,7 @@ static int i915_drm_suspend(struct drm_device *dev)
 	intel_dp_mst_suspend(dev_priv);
 
 	if (HAS_LMEM(dev_priv))	{
-		ret = intel_dmem_evict_buffers(dev, true);
+		ret = intel_dmem_evict_buffers(dev, true, false);
 		if (ret)
 			return ret;
 
@@ -1410,6 +1473,14 @@ static int i915_drm_resume(struct drm_device *dev)
 
 	drm_mode_config_reset(dev);
 
+	if (HAS_LMEM(dev_priv)) {
+		ret = intel_dmem_evict_buffers(dev, false, true);
+		if (ret) {
+			DRM_ERROR("perma pinned obj's failed with err=%d\n", ret);
+			return ret;
+		}
+	}
+
 	i915_gem_resume(dev_priv);
 
 	if (HAS_LMEM(dev_priv)) {
@@ -1419,9 +1490,11 @@ static int i915_drm_resume(struct drm_device *dev)
 		if (ret)
 			GEM_BUG_ON(ret);
 
-		ret = intel_dmem_evict_buffers(dev, false);
-		if (ret)
-			DRM_ERROR("i915_resume:i915_gem_object_pin_pages failed with err=%d\n", ret);
+		ret = intel_dmem_evict_buffers(dev, false, false);
+		if (ret) {
+			DRM_ERROR("gem_object_pin_pages failed with err=%d\n", ret);
+			return ret;
+		}
 	}
 
 	intel_modeset_init_hw(dev_priv);
