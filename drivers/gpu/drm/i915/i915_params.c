@@ -197,6 +197,9 @@ i915_param_named_unsafe(fake_lmem_start, ulong, 0400,
 	"Fake LMEM start offset (default: 0)");
 #endif
 
+i915_param_named_unsafe(enable_eviction, bool, 0600,
+	"Enable memcpy based eviction which does not rely on DMA resv refactoring)");
+
 static __always_inline void _print_param(struct drm_printer *p,
 					 const char *name,
 					 const char *type,

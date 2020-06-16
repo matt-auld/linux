@@ -175,7 +175,7 @@ next:
 	list_splice_tail(&still_in_list, *phase);
 	mutex_unlock(&mem->objects.lock);
 
-	if (found < target) {
+	if (found < target && i915->params.enable_eviction) {
 		pass++;
 		phase++;
 		if (*phase)

@@ -293,6 +293,7 @@ static void i915_gem_free_object(struct drm_gem_object *gem_obj)
 	 * If object had been swapped out, free the hidden object.
 	 */
 	if (obj->swapto) {
+		GEM_BUG_ON(!i915->params.enable_eviction);
 		i915_gem_object_put(obj->swapto);
 		obj->swapto = NULL;
 	}

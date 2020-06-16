@@ -21,6 +21,7 @@ i915_gem_object_swapout_pages(struct drm_i915_gem_object *obj,
 	GEM_BUG_ON(i915_gem_object_has_pages(obj));
 	GEM_BUG_ON(obj->mm.madv != I915_MADV_WILLNEED);
 	GEM_BUG_ON(obj->mm.region->type != INTEL_MEMORY_LOCAL);
+	GEM_BUG_ON(!i915->params.enable_eviction);
 
 	assert_object_held(obj);
 
@@ -70,6 +71,7 @@ static int
 i915_gem_object_swapin_pages(struct drm_i915_gem_object *obj,
 			     struct sg_table *pages, unsigned int sizes)
 {
+	struct drm_i915_private *i915 = to_i915(obj->base.dev);
 	struct drm_i915_gem_object *dst, *src;
 	int err;
 
@@ -77,6 +79,7 @@ i915_gem_object_swapin_pages(struct drm_i915_gem_object *obj,
 	GEM_BUG_ON(i915_gem_object_has_pages(obj));
 	GEM_BUG_ON(obj->mm.madv != I915_MADV_WILLNEED);
 	GEM_BUG_ON(obj->mm.region->type != INTEL_MEMORY_LOCAL);
+	GEM_BUG_ON(!i915->params.enable_eviction);
 
 	assert_object_held(obj);
 
@@ -146,6 +149,7 @@ i915_gem_object_put_pages_buddy(struct drm_i915_gem_object *obj,
 int
 i915_gem_object_get_pages_buddy(struct drm_i915_gem_object *obj)
 {
+	struct drm_i915_private *i915 = to_i915(obj->base.dev);
 	struct intel_memory_region *mem = obj->mm.region;
 	struct list_head *blocks = &obj->mm.blocks;
 	resource_size_t size = obj->base.size;
@@ -222,6 +226,7 @@ i915_gem_object_get_pages_buddy(struct drm_i915_gem_object *obj)
 	/* if we saved the page contents, swap them in */
 	if (obj->swapto) {
 		GEM_BUG_ON(i915_gem_object_is_volatile(obj));
+		GEM_BUG_ON(!i915->params.enable_eviction);
 
 		ret = i915_gem_object_swapin_pages(obj, st,
 						   sg_page_sizes);
