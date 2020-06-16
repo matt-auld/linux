@@ -1151,6 +1151,11 @@ static void i915_gem_init__mm(struct drm_i915_private *i915)
 	INIT_LIST_HEAD(&i915->mm.purge_list);
 	INIT_LIST_HEAD(&i915->mm.shrink_list);
 
+	seqlock_init(&i915->mm.blt_swap_stats.in.lock);
+	seqlock_init(&i915->mm.blt_swap_stats.out.lock);
+	seqlock_init(&i915->mm.memcpy_swap_stats.in.lock);
+	seqlock_init(&i915->mm.memcpy_swap_stats.out.lock);
+
 	i915_gem_init__objects(i915);
 }
 

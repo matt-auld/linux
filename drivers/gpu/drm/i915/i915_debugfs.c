@@ -359,12 +359,46 @@ static void print_context_stats(struct seq_file *m,
 	print_file_stats(m, "[k]contexts", kstats);
 }
 
+static void
+evict_stat(struct seq_file *m,
+	   const char *name,
+	   const char *direction,
+	   struct i915_mm_swap_stat *stat)
+{
+	unsigned long pages;
+	unsigned int seq;
+	u64 time, rate;
+	ktime_t ktime;
+
+	do {
+		seq = read_seqbegin(&stat->lock);
+		pages = stat->pages;
+		ktime = stat->time;
+	} while (read_seqretry(&stat->lock, seq));
+
+	time = ktime_to_us(ktime);
+	rate = time ? div64_u64((u64)pages * PAGE_SIZE, time) : 0;
+	rate = div64_ul(rate * USEC_PER_SEC, 1024 * 1024);
+
+	seq_printf(m, "%s swap %s %lu MiB in %llums, %llu MiB/s.\n",
+		   name, direction, pages * PAGE_SIZE, ktime_to_ms(ktime),
+		   rate);
+}
+
+static void
+evict_stats(struct seq_file *m,
+	    const char *name,
+	    struct i915_mm_swap_stats *stats)
+{
+	evict_stat(m, name, "in", &stats->in);
+	evict_stat(m, name, "out", &stats->out);
+}
+
 static int i915_gem_object_info(struct seq_file *m, void *data)
 {
 	struct drm_i915_private *i915 = node_to_i915(m->private);
 	struct intel_memory_region *mr;
 	enum intel_region_id id;
-	u64 time, bytes, rate;
 
 	seq_printf(m, "%u shrinkable [%u free] objects, %llu bytes\n",
 		   i915->mm.shrink_count,
@@ -374,41 +408,8 @@ static int i915_gem_object_info(struct seq_file *m, void *data)
 		seq_printf(m, "%s: total:%pa, available:%pa bytes\n",
 			   mr->name, &mr->total, &mr->avail);
 
-	time = atomic_long_read(&i915->time_swap_out_ms);
-	bytes = atomic_long_read(&i915->num_bytes_swapped_out);
-	if (time)
-		rate = div64_u64(bytes * 1000, time * 1024 * 1024);
-	else
-		rate = 0;
-	seq_printf(m, "BLT: swapout %llu Bytes in %llu mSec(%llu MB/Sec)\n",
-		   bytes, time, rate);
-
-	time = atomic_long_read(&i915->time_swap_in_ms);
-	bytes = atomic_long_read(&i915->num_bytes_swapped_in);
-	if (time)
-		rate = div64_u64(bytes * 1000, time * 1024 * 1024);
-	else
-		rate = 0;
-	seq_printf(m, "BLT: swapin %llu Bytes in %llu mSec(%llu MB/Sec)\n",
-		   bytes, time, rate);
-
-	time = atomic_long_read(&i915->time_swap_out_ms_memcpy);
-	bytes = atomic_long_read(&i915->num_bytes_swapped_out_memcpy);
-	if (time)
-		rate = div64_u64(bytes * 1000, time * 1024 * 1024);
-	else
-		rate = 0;
-	seq_printf(m, "Memcpy: swapout %llu Bytes in %llu mSec(%llu MB/Sec)\n",
-		   bytes, time, rate);
-
-	time = atomic_long_read(&i915->time_swap_in_ms_memcpy);
-	bytes = atomic_long_read(&i915->num_bytes_swapped_in_memcpy);
-	if (time)
-		rate = div64_u64(bytes * 1000, time * 1024 * 1024);
-	else
-		rate = 0;
-	seq_printf(m, "Memcpy: swapin %llu Bytes in %llu mSec(%llu MB/Sec)\n",
-		   bytes, time, rate);
+	evict_stats(m, "Blitter", &i915->mm.blt_swap_stats);
+	evict_stats(m, "Memcpy", &i915->mm.memcpy_swap_stats);
 	seq_putc(m, '\n');
 
 	print_context_stats(m, i915);

@@ -49,6 +49,7 @@
 #include <linux/shmem_fs.h>
 #include <linux/stackdepot.h>
 #include <linux/xarray.h>
+#include <linux/seqlock.h>
 
 #include <drm/intel-gtt.h>
 #include <drm/drm_legacy.h> /* for struct drm_dma_handle */
@@ -548,6 +549,17 @@ struct intel_l3_parity {
 	int which_slice;
 };
 
+struct i915_mm_swap_stat {
+	seqlock_t lock;
+	unsigned long pages;
+	ktime_t time;
+};
+
+struct i915_mm_swap_stats {
+	struct i915_mm_swap_stat in;
+	struct i915_mm_swap_stat out;
+};
+
 struct i915_gem_mm {
 	/* Protects bound_list/unbound_list and #drm_i915_gem_object.mm.link */
 	spinlock_t obj_lock;
@@ -601,6 +613,9 @@ struct i915_gem_mm {
 
 	/* To protect above two set of vmas */
 	wait_queue_head_t window_queue;
+
+	struct i915_mm_swap_stats blt_swap_stats;
+	struct i915_mm_swap_stats memcpy_swap_stats;
 };
 
 #define I915_IDLE_ENGINES_TIMEOUT (200) /* in ms */
@@ -1220,16 +1235,6 @@ struct drm_i915_private {
 	 * NOTE: This is the dri1/ums dungeon, don't add stuff here. Your patch
 	 * will be rejected. Instead look for a better place.
 	 */
-
-	atomic_long_t num_bytes_swapped_out;
-	atomic_long_t num_bytes_swapped_in;
-	atomic_long_t time_swap_out_ms;
-	atomic_long_t time_swap_in_ms;
-
-	atomic_long_t num_bytes_swapped_out_memcpy;
-	atomic_long_t num_bytes_swapped_in_memcpy;
-	atomic_long_t time_swap_out_ms_memcpy;
-	atomic_long_t time_swap_in_ms_memcpy;
 };
 
 static inline struct drm_i915_private *to_i915(const struct drm_device *dev)

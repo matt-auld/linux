@@ -9,14 +9,29 @@
 #include "i915_trace.h"
 #include "i915_gem_mman.h"
 
+static void
+__update_stat(struct i915_mm_swap_stat *stat,
+	      unsigned long pages,
+	      ktime_t start)
+{
+	if (stat) {
+		start = ktime_get() - start;
+
+		write_seqlock(&stat->lock);
+		stat->time = ktime_add(stat->time, start);
+		stat->pages += pages;
+		write_sequnlock(&stat->lock);
+	}
+}
+
 static int
 i915_gem_object_swapout_pages(struct drm_i915_gem_object *obj,
 			      struct sg_table *pages, unsigned int sizes)
 {
 	struct drm_i915_private *i915 = to_i915(obj->base.dev);
+	struct i915_mm_swap_stat *stat = NULL;
 	struct drm_i915_gem_object *dst, *src;
-	unsigned long start, diff, msec;
-	bool blt_completed = false;
+	ktime_t start = ktime_get();
 	int err = -EINVAL;
 
 	GEM_BUG_ON(obj->swapto);
@@ -26,7 +41,6 @@ i915_gem_object_swapout_pages(struct drm_i915_gem_object *obj,
 	GEM_BUG_ON(!i915->params.enable_eviction);
 
 	assert_object_held(obj);
-	start = jiffies;
 
 	/* create a shadow object on smem region */
 	dst = i915_gem_object_create_shmem(i915, obj->base.size);
@@ -58,10 +72,14 @@ i915_gem_object_swapout_pages(struct drm_i915_gem_object *obj,
 	if (i915->params.enable_eviction >= 2) {
 		err = i915_window_blt_copy(dst, src);
 		if (!err)
-			blt_completed = true;
+			stat = &i915->mm.blt_swap_stats.out;
 	}
-	if (err && i915->params.enable_eviction != 2)
+
+	if (err && i915->params.enable_eviction != 2) {
 		err = i915_gem_object_memcpy(dst, src);
+		if (!err)
+			stat = &i915->mm.memcpy_swap_stats.out;
+	}
 
 	__i915_gem_object_unpin_pages(src);
 	__i915_gem_object_unset_pages(src);
@@ -73,18 +91,7 @@ i915_gem_object_swapout_pages(struct drm_i915_gem_object *obj,
 	else
 		i915_gem_object_put(dst);
 
-	if (!err) {
-		diff = jiffies - start;
-		msec = diff * 1000 / HZ;
-		if (blt_completed) {
-			atomic_long_add(sizes, &i915->num_bytes_swapped_out);
-			atomic_long_add(msec, &i915->time_swap_out_ms);
-		} else {
-			atomic_long_add(sizes,
-					&i915->num_bytes_swapped_out_memcpy);
-			atomic_long_add(msec, &i915->time_swap_out_ms_memcpy);
-		}
-	}
+	__update_stat(stat, sizes >> PAGE_SHIFT, start);
 
 	return err;
 }
@@ -94,9 +101,9 @@ i915_gem_object_swapin_pages(struct drm_i915_gem_object *obj,
 			     struct sg_table *pages, unsigned int sizes)
 {
 	struct drm_i915_private *i915 = to_i915(obj->base.dev);
+	struct i915_mm_swap_stat *stat = NULL;
 	struct drm_i915_gem_object *dst, *src;
-	unsigned long start, diff, msec;
-	bool blt_completed = false;
+	ktime_t start = ktime_get();
 	int err = -EINVAL;
 
 	GEM_BUG_ON(!obj->swapto);
@@ -106,7 +113,6 @@ i915_gem_object_swapin_pages(struct drm_i915_gem_object *obj,
 	GEM_BUG_ON(!i915->params.enable_eviction);
 
 	assert_object_held(obj);
-	start = jiffies;
 
 	src = obj->swapto;
 
@@ -134,10 +140,14 @@ i915_gem_object_swapin_pages(struct drm_i915_gem_object *obj,
 	if (i915->params.enable_eviction >= 2) {
 		err = i915_window_blt_copy(dst, src);
 		if (!err)
-			blt_completed = true;
+			stat = &i915->mm.blt_swap_stats.in;
 	}
-	if (err && i915->params.enable_eviction != 2)
+
+	if (err && i915->params.enable_eviction != 2) {
 		err = i915_gem_object_memcpy(dst, src);
+		if (!err)
+			stat = &i915->mm.memcpy_swap_stats.in;
+	}
 
 	__i915_gem_object_unpin_pages(dst);
 	__i915_gem_object_unset_pages(dst);
@@ -149,18 +159,7 @@ i915_gem_object_swapin_pages(struct drm_i915_gem_object *obj,
 		i915_gem_object_put(src);
 	}
 
-	if (!err) {
-		diff = jiffies - start;
-		msec = diff * 1000 / HZ;
-		if (blt_completed) {
-			atomic_long_add(sizes, &i915->num_bytes_swapped_in);
-			atomic_long_add(msec, &i915->time_swap_in_ms);
-		} else {
-			atomic_long_add(sizes,
-					&i915->num_bytes_swapped_in_memcpy);
-			atomic_long_add(msec, &i915->time_swap_in_ms_memcpy);
-		}
-	}
+	__update_stat(stat, sizes >> PAGE_SHIFT, start);
 
 	return err;
 }
