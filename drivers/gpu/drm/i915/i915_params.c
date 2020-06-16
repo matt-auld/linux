@@ -200,6 +200,9 @@ i915_param_named_unsafe(fake_lmem_start, ulong, 0400,
 i915_param_named_unsafe(enable_eviction, bool, 0600,
 	"Enable memcpy based eviction which does not rely on DMA resv refactoring)");
 
+i915_param_named_unsafe(lmem_size, uint, 0400,
+	"Change lmem size for each region. (default: 0, all memory)");
+
 static __always_inline void _print_param(struct drm_printer *p,
 					 const char *name,
 					 const char *type,

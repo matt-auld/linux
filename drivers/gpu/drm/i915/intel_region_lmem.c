@@ -196,6 +196,10 @@ setup_lmem(struct drm_i915_private *dev_priv)
 
 	io_start = pci_resource_start(pdev, 2);
 
+	if (dev_priv->params.lmem_size > 0)
+		lmem_size = min_t(resource_size_t, lmem_size,
+				  mul_u32_u32(dev_priv->params.lmem_size, SZ_1M));
+
 	mem = intel_memory_region_create(dev_priv,
 					 0,
 					 lmem_size,
