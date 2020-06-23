@@ -16,6 +16,7 @@ i915_gem_object_swapout_pages(struct drm_i915_gem_object *obj,
 	struct drm_i915_private *i915 = to_i915(obj->base.dev);
 	struct drm_i915_gem_object *dst, *src;
 	unsigned long start, diff, msec;
+	bool blt_completed = false;
 	int err = -EINVAL;
 
 	GEM_BUG_ON(obj->swapto);
@@ -54,8 +55,11 @@ i915_gem_object_swapout_pages(struct drm_i915_gem_object *obj,
 	__i915_gem_object_pin_pages(src);
 
 	/* copying the pages */
-	if (i915->params.enable_eviction >= 2)
+	if (i915->params.enable_eviction >= 2) {
 		err = i915_window_blt_copy(dst, src);
+		if (!err)
+			blt_completed = true;
+	}
 	if (err && i915->params.enable_eviction != 2)
 		err = i915_gem_object_memcpy(dst, src);
 
@@ -72,8 +76,14 @@ i915_gem_object_swapout_pages(struct drm_i915_gem_object *obj,
 	if (!err) {
 		diff = jiffies - start;
 		msec = diff * 1000 / HZ;
-		atomic_long_add(msec, &i915->time_swap_out_ms);
-		atomic_long_add(sizes, &i915->num_bytes_swapped_out);
+		if (blt_completed) {
+			atomic_long_add(sizes, &i915->num_bytes_swapped_out);
+			atomic_long_add(msec, &i915->time_swap_out_ms);
+		} else {
+			atomic_long_add(sizes,
+					&i915->num_bytes_swapped_out_memcpy);
+			atomic_long_add(msec, &i915->time_swap_out_ms_memcpy);
+		}
 	}
 
 	return err;
@@ -86,6 +96,7 @@ i915_gem_object_swapin_pages(struct drm_i915_gem_object *obj,
 	struct drm_i915_private *i915 = to_i915(obj->base.dev);
 	struct drm_i915_gem_object *dst, *src;
 	unsigned long start, diff, msec;
+	bool blt_completed = false;
 	int err = -EINVAL;
 
 	GEM_BUG_ON(!obj->swapto);
@@ -120,8 +131,11 @@ i915_gem_object_swapin_pages(struct drm_i915_gem_object *obj,
 	__i915_gem_object_pin_pages(dst);
 
 	/* copying the pages */
-	if (i915->params.enable_eviction >= 2)
+	if (i915->params.enable_eviction >= 2) {
 		err = i915_window_blt_copy(dst, src);
+		if (!err)
+			blt_completed = true;
+	}
 	if (err && i915->params.enable_eviction != 2)
 		err = i915_gem_object_memcpy(dst, src);
 
@@ -138,8 +152,14 @@ i915_gem_object_swapin_pages(struct drm_i915_gem_object *obj,
 	if (!err) {
 		diff = jiffies - start;
 		msec = diff * 1000 / HZ;
-		atomic_long_add(msec, &i915->time_swap_in_ms);
-		atomic_long_add(sizes, &i915->num_bytes_swapped_in);
+		if (blt_completed) {
+			atomic_long_add(sizes, &i915->num_bytes_swapped_in);
+			atomic_long_add(msec, &i915->time_swap_in_ms);
+		} else {
+			atomic_long_add(sizes,
+					&i915->num_bytes_swapped_in_memcpy);
+			atomic_long_add(msec, &i915->time_swap_in_ms_memcpy);
+		}
 	}
 
 	return err;

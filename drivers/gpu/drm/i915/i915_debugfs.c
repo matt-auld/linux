@@ -364,6 +364,7 @@ static int i915_gem_object_info(struct seq_file *m, void *data)
 	struct drm_i915_private *i915 = node_to_i915(m->private);
 	struct intel_memory_region *mr;
 	enum intel_region_id id;
+	u64 time, bytes, rate;
 
 	seq_printf(m, "%u shrinkable [%u free] objects, %llu bytes\n",
 		   i915->mm.shrink_count,
@@ -372,12 +373,42 @@ static int i915_gem_object_info(struct seq_file *m, void *data)
 	for_each_memory_region(mr, i915, id)
 		seq_printf(m, "%s: total:%pa, available:%pa bytes\n",
 			   mr->name, &mr->total, &mr->avail);
-	seq_printf(m, "num_bytes_swapped_out %ld num_bytes_swapped_in %ld\n",
-		   atomic_long_read(&i915->num_bytes_swapped_out),
-		   atomic_long_read(&i915->num_bytes_swapped_in));
-	seq_printf(m, "time_swap_out_msec %ld time_swap_in_msec %ld\n",
-		   atomic_long_read(&i915->time_swap_out_ms),
-		   atomic_long_read(&i915->time_swap_in_ms));
+
+	time = atomic_long_read(&i915->time_swap_out_ms);
+	bytes = atomic_long_read(&i915->num_bytes_swapped_out);
+	if (time)
+		rate = div64_u64(bytes * 1000, time * 1024 * 1024);
+	else
+		rate = 0;
+	seq_printf(m, "BLT: swapout %llu Bytes in %llu mSec(%llu MB/Sec)\n",
+		   bytes, time, rate);
+
+	time = atomic_long_read(&i915->time_swap_in_ms);
+	bytes = atomic_long_read(&i915->num_bytes_swapped_in);
+	if (time)
+		rate = div64_u64(bytes * 1000, time * 1024 * 1024);
+	else
+		rate = 0;
+	seq_printf(m, "BLT: swapin %llu Bytes in %llu mSec(%llu MB/Sec)\n",
+		   bytes, time, rate);
+
+	time = atomic_long_read(&i915->time_swap_out_ms_memcpy);
+	bytes = atomic_long_read(&i915->num_bytes_swapped_out_memcpy);
+	if (time)
+		rate = div64_u64(bytes * 1000, time * 1024 * 1024);
+	else
+		rate = 0;
+	seq_printf(m, "Memcpy: swapout %llu Bytes in %llu mSec(%llu MB/Sec)\n",
+		   bytes, time, rate);
+
+	time = atomic_long_read(&i915->time_swap_in_ms_memcpy);
+	bytes = atomic_long_read(&i915->num_bytes_swapped_in_memcpy);
+	if (time)
+		rate = div64_u64(bytes * 1000, time * 1024 * 1024);
+	else
+		rate = 0;
+	seq_printf(m, "Memcpy: swapin %llu Bytes in %llu mSec(%llu MB/Sec)\n",
+		   bytes, time, rate);
 	seq_putc(m, '\n');
 
 	print_context_stats(m, i915);
