@@ -891,7 +891,7 @@ int i915_driver_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 
 	i915_driver_register(i915);
 
-	if (HAS_LMEM(i915)) {
+	if (HAS_LMEM(i915) && i915->params.enable_eviction >= 2) {
 		ret = i915_setup_blt_windows(i915);
 		if (ret)
 			goto out_cleanup_drv_register;
@@ -939,7 +939,7 @@ out_fini:
 
 void i915_driver_remove(struct drm_i915_private *i915)
 {
-	if (HAS_LMEM(i915))
+	if (HAS_LMEM(i915) && i915->params.enable_eviction >= 2)
 		i915_teardown_blt_windows(i915);
 
 	disable_rpm_wakeref_asserts(&i915->runtime_pm);

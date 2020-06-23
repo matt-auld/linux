@@ -16,7 +16,7 @@ i915_gem_object_swapout_pages(struct drm_i915_gem_object *obj,
 	struct drm_i915_private *i915 = to_i915(obj->base.dev);
 	struct drm_i915_gem_object *dst, *src;
 	unsigned long start, diff, msec;
-	int err;
+	int err = -EINVAL;
 
 	GEM_BUG_ON(obj->swapto);
 	GEM_BUG_ON(i915_gem_object_has_pages(obj));
@@ -54,7 +54,10 @@ i915_gem_object_swapout_pages(struct drm_i915_gem_object *obj,
 	__i915_gem_object_pin_pages(src);
 
 	/* copying the pages */
-	err = i915_gem_object_memcpy(dst, src);
+	if (i915->params.enable_eviction >= 2)
+		err = i915_window_blt_copy(dst, src);
+	if (err && i915->params.enable_eviction != 2)
+		err = i915_gem_object_memcpy(dst, src);
 
 	__i915_gem_object_unpin_pages(src);
 	__i915_gem_object_unset_pages(src);
@@ -83,7 +86,7 @@ i915_gem_object_swapin_pages(struct drm_i915_gem_object *obj,
 	struct drm_i915_private *i915 = to_i915(obj->base.dev);
 	struct drm_i915_gem_object *dst, *src;
 	unsigned long start, diff, msec;
-	int err;
+	int err = -EINVAL;
 
 	GEM_BUG_ON(!obj->swapto);
 	GEM_BUG_ON(i915_gem_object_has_pages(obj));
@@ -117,7 +120,10 @@ i915_gem_object_swapin_pages(struct drm_i915_gem_object *obj,
 	__i915_gem_object_pin_pages(dst);
 
 	/* copying the pages */
-	err = i915_gem_object_memcpy(dst, src);
+	if (i915->params.enable_eviction >= 2)
+		err = i915_window_blt_copy(dst, src);
+	if (err && i915->params.enable_eviction != 2)
+		err = i915_gem_object_memcpy(dst, src);
 
 	__i915_gem_object_unpin_pages(dst);
 	__i915_gem_object_unset_pages(dst);

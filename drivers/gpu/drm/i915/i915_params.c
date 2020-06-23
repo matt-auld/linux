@@ -197,8 +197,10 @@ i915_param_named_unsafe(fake_lmem_start, ulong, 0400,
 	"Fake LMEM start offset (default: 0)");
 #endif
 
-i915_param_named_unsafe(enable_eviction, bool, 0600,
-	"Enable memcpy based eviction which does not rely on DMA resv refactoring)");
+i915_param_named_unsafe(enable_eviction, uint, 0600,
+	"Enable eviction which does not rely on DMA resv refactoring "
+	"0=disabled, 1=memcpy based only, 2=blt based only, "
+	"3=blt based but fallsback to memcpy based [default])");
 
 i915_param_named_unsafe(lmem_size, uint, 0400,
 	"Change lmem size for each region. (default: 0, all memory)");
