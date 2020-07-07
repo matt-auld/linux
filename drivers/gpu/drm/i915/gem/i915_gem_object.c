@@ -95,6 +95,20 @@ void i915_gem_object_init(struct drm_i915_gem_object *obj,
 	mutex_init(&obj->mm.get_dma_page.lock);
 }
 
+static bool i915_gem_object_use_llc(struct drm_i915_gem_object *obj)
+{
+	struct drm_i915_private *i915 = to_i915(obj->base.dev);
+
+	if (HAS_LLC(i915))
+		return true;
+
+	if (IS_DGFX(i915) && HAS_SNOOP(i915) &&
+	    !i915_gem_object_is_lmem(obj))
+		return true;
+
+	return false;
+}
+
 /**
  * Mark up the object's coherency levels for a given cache_level
  * @obj: #drm_i915_gem_object
@@ -108,7 +122,7 @@ void i915_gem_object_set_cache_coherency(struct drm_i915_gem_object *obj,
 	if (cache_level != I915_CACHE_NONE)
 		obj->cache_coherent = (I915_BO_CACHE_COHERENT_FOR_READ |
 				       I915_BO_CACHE_COHERENT_FOR_WRITE);
-	else if (HAS_LLC(to_i915(obj->base.dev)))
+	else if (i915_gem_object_use_llc(obj))
 		obj->cache_coherent = I915_BO_CACHE_COHERENT_FOR_READ;
 	else
 		obj->cache_coherent = 0;
