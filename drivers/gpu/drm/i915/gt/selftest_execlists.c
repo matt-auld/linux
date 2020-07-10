@@ -5854,7 +5854,8 @@ static int compare_isolation(struct intel_engine_cs *engine,
 	}
 
 	lrc = i915_gem_object_pin_map_unlocked(ce->state->obj,
-				      i915_coherent_map_type(engine->i915));
+					       i915_coherent_map_type(engine->i915,
+								      ce->state->obj, true));
 	if (IS_ERR(lrc)) {
 		err = PTR_ERR(lrc);
 		goto err_B1;

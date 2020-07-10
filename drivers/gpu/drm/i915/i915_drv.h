@@ -78,6 +78,7 @@
 #include "gem/i915_gem_context_types.h"
 #include "gem/i915_gem_shrinker.h"
 #include "gem/i915_gem_stolen.h"
+#include "gem/i915_gem_lmem.h"
 
 #include "gt/intel_engine.h"
 #include "gt/intel_gt_types.h"
@@ -2027,9 +2028,15 @@ static inline int intel_hws_csb_write_index(struct drm_i915_private *i915)
 }
 
 static inline enum i915_map_type
-i915_coherent_map_type(struct drm_i915_private *i915)
+i915_coherent_map_type(struct drm_i915_private *i915,
+		       struct drm_i915_gem_object *obj, bool always_coherent)
 {
-	return HAS_LLC(i915) ? I915_MAP_WB : I915_MAP_WC;
+	if (i915_gem_object_is_lmem(obj))
+		return I915_MAP_WC;
+	if (HAS_LLC(i915) || always_coherent)
+		return I915_MAP_WB;
+	else
+		return I915_MAP_WC;
 }
 
 static inline u64 i915_cs_timestamp_ns_to_ticks(struct drm_i915_private *i915, u64 val)

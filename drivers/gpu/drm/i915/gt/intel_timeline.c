@@ -31,6 +31,7 @@ static int __hwsp_alloc(struct intel_gt *gt, struct intel_timeline_hwsp *hwsp)
 {
 	struct drm_i915_private *i915 = gt->i915;
 	struct drm_i915_gem_object *obj;
+	int type;
 	int ret;
 
 	obj = i915_gem_object_create_internal(i915, PAGE_SIZE);
@@ -47,7 +48,8 @@ static int __hwsp_alloc(struct intel_gt *gt, struct intel_timeline_hwsp *hwsp)
 	}
 
 	/* Pin early so we can call i915_ggtt_pin_unlocked(). */
-	hwsp->vaddr = i915_gem_object_pin_map(obj, I915_MAP_WB);
+	type = i915_coherent_map_type(i915, obj, true);
+	hwsp->vaddr = i915_gem_object_pin_map(obj, type);
 	if (IS_ERR(hwsp->vaddr)) {
 		ret = PTR_ERR(hwsp->vaddr);
 		goto out_unlock;
@@ -235,9 +237,11 @@ intel_timeline_pin_map(struct intel_timeline *timeline)
 	if (!timeline->hwsp_cacheline) {
 		struct drm_i915_gem_object *obj = timeline->hwsp_ggtt->obj;
 		u32 ofs = offset_in_page(timeline->hwsp_offset);
+		int type;
 		void *vaddr;
 
-		vaddr = i915_gem_object_pin_map(obj, I915_MAP_WB);
+		type = i915_coherent_map_type(timeline->gt->i915, obj, true);
+		vaddr = i915_gem_object_pin_map(obj, type);
 		if (IS_ERR(vaddr))
 			return PTR_ERR(vaddr);
 
