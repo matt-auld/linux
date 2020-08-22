@@ -105,30 +105,16 @@ void i915_gem_object_init_memory_region(struct drm_i915_gem_object *obj,
 					struct intel_memory_region *mem)
 {
 	INIT_LIST_HEAD(&obj->mm.blocks);
+	WARN_ON(i915_gem_object_has_pages(obj));
 	obj->mm.region = intel_memory_region_get(mem);
 
 	if (obj->base.size <= mem->min_page_size)
 		obj->flags |= I915_BO_ALLOC_CONTIGUOUS;
-
-	mutex_lock(&mem->objects.lock);
-
-	if (obj->flags & I915_BO_ALLOC_VOLATILE)
-		list_add(&obj->mm.region_link, &mem->objects.purgeable);
-	else
-		list_add(&obj->mm.region_link, &mem->objects.list);
-
-	mutex_unlock(&mem->objects.lock);
 }
 
 void i915_gem_object_release_memory_region(struct drm_i915_gem_object *obj)
 {
-	struct intel_memory_region *mem = obj->mm.region;
-
-	mutex_lock(&mem->objects.lock);
-	list_del(&obj->mm.region_link);
-	mutex_unlock(&mem->objects.lock);
-
-	intel_memory_region_put(mem);
+	intel_memory_region_put(obj->mm.region);
 }
 
 struct drm_i915_gem_object *
