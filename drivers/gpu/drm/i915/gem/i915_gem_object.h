@@ -163,7 +163,7 @@ static inline int __i915_gem_object_lock(struct drm_i915_gem_object *obj,
 		ret = 0;
 
 	if (ret == -EDEADLK)
-		ww->contended = obj;
+		ww->contended = i915_gem_object_get(obj);
 
 	return ret;
 }
