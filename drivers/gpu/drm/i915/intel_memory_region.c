@@ -96,6 +96,7 @@ __intel_memory_region_put_block_buddy(struct i915_buddy_block *block)
 }
 
 static int intel_memory_region_evict(struct intel_memory_region *mem,
+				     struct i915_gem_ww_ctx *ww,
 				     resource_size_t target)
 {
 	struct drm_i915_private *i915 = mem->i915;
@@ -109,6 +110,7 @@ static int intel_memory_region_evict(struct intel_memory_region *mem,
 	struct list_head **phase;
 	resource_size_t found;
 	int pass;
+	int err = 0;
 
 	intel_gt_retire_requests(&i915->gt);
 
@@ -126,10 +128,11 @@ next:
 						mm.region_link))) {
 		list_move_tail(&obj->mm.region_link, &still_in_list);
 
-		if (!i915_gem_object_has_pages(obj))
+		if (i915_gem_object_is_framebuffer(obj))
 			continue;
 
-		if (i915_gem_object_is_framebuffer(obj))
+		/* Already locked this object? */
+		if (ww && ww == i915_gem_get_locking_ctx(obj))
 			continue;
 
 		/*
@@ -147,33 +150,50 @@ next:
 
 		mutex_unlock(&mem->objects.lock);
 
+		if (ww) {
+			err = i915_gem_object_lock_to_evict(obj, ww);
+			if (err)
+				goto put;
+		} else {
+			if (!i915_gem_object_trylock(obj))
+				goto put;
+		}
+
+		if (!i915_gem_object_has_pages(obj))
+			goto unlock;
+
 		/* tell callee to do swapping */
 		if (i915_gem_object_type_has(obj, I915_GEM_OBJECT_HAS_IOMEM)
 		    && pass == 1)
 			obj->do_swapping = true;
 
 		if (!i915_gem_object_unbind(obj, I915_GEM_OBJECT_UNBIND_ACTIVE)) {
-			if (i915_gem_object_trylock(obj)) {
-				__i915_gem_object_put_pages(obj);
-				/* May arrive from get_pages on another bo */
-				if (!i915_gem_object_has_pages(obj)) {
-					found += obj->base.size;
-					if (obj->mm.madv == I915_MADV_DONTNEED)
-						obj->mm.madv = __I915_MADV_PURGED;
-				}
-				i915_gem_object_unlock(obj);
+			__i915_gem_object_put_pages(obj);
+			/* May arrive from get_pages on another bo */
+
+			if (!i915_gem_object_has_pages(obj)) {
+				found += obj->base.size;
+				if (obj->mm.madv == I915_MADV_DONTNEED)
+					obj->mm.madv = __I915_MADV_PURGED;
 			}
 		}
 
 		obj->do_swapping = false;
+unlock:
+		if (!ww)
+			i915_gem_object_unlock(obj);
+put:
 		i915_gem_object_put(obj);
 		mutex_lock(&mem->objects.lock);
 
-		if (found >= target)
+		if (err == -EDEADLK || err == -EINTR || found >= target)
 			break;
 	}
 	list_splice_tail(&still_in_list, *phase);
 	mutex_unlock(&mem->objects.lock);
+
+	if (err == -EDEADLK || err == -EINTR)
+		return err;
 
 	if (found < target && i915->params.enable_eviction) {
 		pass++;
@@ -182,11 +202,15 @@ next:
 			goto next;
 	}
 
+	if (ww)
+		i915_gem_ww_ctx_unlock_evictions(ww);
+
 	return (found < target) ? -ENOSPC : 0;
 }
 
 int
 __intel_memory_region_get_pages_buddy(struct intel_memory_region *mem,
+				      struct i915_gem_ww_ctx *ww,
 				      resource_size_t size,
 				      unsigned int flags,
 				      struct list_head *blocks)
@@ -194,6 +218,7 @@ __intel_memory_region_get_pages_buddy(struct intel_memory_region *mem,
 	unsigned int min_order = 0;
 	unsigned int max_order;
 	unsigned long n_pages;
+	int err;
 
 	GEM_BUG_ON(!IS_ALIGNED(size, mem->mm.chunk_size));
 	GEM_BUG_ON(!list_empty(blocks));
@@ -241,12 +266,11 @@ retry:
 
 			if (order-- == min_order) {
 				resource_size_t target;
-				int err;
 
 				target = n_pages * mem->mm.chunk_size;
 
 				mutex_unlock(&mem->mm_lock);
-				err = intel_memory_region_evict(mem,
+				err = intel_memory_region_evict(mem, ww,
 								target);
 				mutex_lock(&mem->mm_lock);
 				if (err)
@@ -272,6 +296,9 @@ retry:
 err_free_blocks:
 	intel_memory_region_free_pages(mem, blocks);
 	mutex_unlock(&mem->mm_lock);
+	if (err == -EDEADLK || err == -EINTR)
+		return err;
+
 	return -ENXIO;
 }
 
@@ -284,7 +311,7 @@ __intel_memory_region_get_block_buddy(struct intel_memory_region *mem,
 	LIST_HEAD(blocks);
 	int ret;
 
-	ret = __intel_memory_region_get_pages_buddy(mem, size, flags, &blocks);
+	ret = __intel_memory_region_get_pages_buddy(mem, NULL, size, flags, &blocks);
 	if (ret)
 		return ERR_PTR(ret);
 

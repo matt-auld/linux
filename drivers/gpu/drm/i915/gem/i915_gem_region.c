@@ -204,6 +204,7 @@ i915_gem_object_get_pages_buddy(struct drm_i915_gem_object *obj)
 	struct scatterlist *sg;
 	unsigned int sg_page_sizes;
 	int ret;
+	struct i915_gem_ww_ctx *ww = i915_gem_get_locking_ctx(obj);
 
 	/* XXX: Check if we have any post. This is nasty hack, see gem_create */
 	if (obj->mm.gem_create_posted_err)
@@ -222,7 +223,8 @@ i915_gem_object_get_pages_buddy(struct drm_i915_gem_object *obj)
 	if (obj->flags & I915_BO_ALLOC_CONTIGUOUS)
 		flags |= I915_ALLOC_CONTIGUOUS;
 
-	ret = __intel_memory_region_get_pages_buddy(mem, size, flags, blocks);
+	ret = __intel_memory_region_get_pages_buddy(mem, ww, size, flags,
+						    blocks);
 	if (ret)
 		goto err_free_sg;
 
@@ -277,7 +279,8 @@ i915_gem_object_get_pages_buddy(struct drm_i915_gem_object *obj)
 		if (ret) {
 			/* swapin failed, free the pages */
 			__intel_memory_region_put_pages_buddy(mem, blocks);
-			ret = -ENXIO;
+			if (ret != -EDEADLK && ret != -EINTR)
+				ret = -ENXIO;
 			goto err_free_sg;
 		}
 	} else if (obj->flags & I915_BO_ALLOC_CPU_CLEAR) {

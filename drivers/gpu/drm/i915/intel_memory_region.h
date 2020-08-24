@@ -16,6 +16,7 @@
 
 #include "i915_buddy.h"
 
+struct i915_gem_ww_ctx;
 struct drm_i915_private;
 struct drm_i915_gem_object;
 struct intel_memory_region;
@@ -116,6 +117,7 @@ int intel_memory_region_init_buddy(struct intel_memory_region *mem);
 void intel_memory_region_release_buddy(struct intel_memory_region *mem);
 
 int __intel_memory_region_get_pages_buddy(struct intel_memory_region *mem,
+					  struct i915_gem_ww_ctx *ww,
 					  resource_size_t size,
 					  unsigned int flags,
 					  struct list_head *blocks);
