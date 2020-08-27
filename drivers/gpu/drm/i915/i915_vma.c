@@ -868,8 +868,7 @@ int i915_vma_pin_ww(struct i915_vma *vma, struct i915_gem_ww_ctx *ww,
 			vma->obj && i915_gem_object_has_pinned_pages(vma->obj) &&
 			!vma->vm->allocate_va_range;
 
-		if (lockdep_is_held(&vma->vm->i915->drm.struct_mutex) &&
-		    !pinned_bind_wo_alloc)
+		if (!pinned_bind_wo_alloc)
 			WARN_ON(!ww);
 		if (ww && vma->resv)
 			assert_vma_held(vma);
