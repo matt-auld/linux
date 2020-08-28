@@ -298,6 +298,7 @@ int intel_memory_regions_hw_probe(struct drm_i915_private *i915)
 		mem->id = i;
 		mem->type = type;
 		mem->instance = instance;
+		mem->gt = &i915->gt;
 
 		i915->mm.regions[i] = mem;
 	}

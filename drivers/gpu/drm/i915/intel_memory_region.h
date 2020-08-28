@@ -91,6 +91,7 @@ struct intel_memory_region {
 	u16 instance;
 	enum intel_region_id id;
 	char name[8];
+	struct intel_gt *gt; /* GT closest to this region. */
 
 	dma_addr_t remap_addr;
 
