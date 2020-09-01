@@ -45,6 +45,7 @@ struct intel_timeline {
 	atomic_t pin_count;
 	atomic_t active_count;
 
+	void *hwsp_map;
 	const u32 *hwsp_seqno;
 	struct i915_vma *hwsp_ggtt;
 	u32 hwsp_offset;

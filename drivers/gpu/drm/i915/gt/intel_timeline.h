@@ -114,5 +114,6 @@ void intel_gt_show_timelines(struct intel_gt *gt,
 						  const struct i915_request *rq,
 						  const char *prefix,
 						  int indent));
+I915_SELFTEST_DECLARE(int intel_timeline_pin_map(struct intel_timeline *tl));
 
 #endif

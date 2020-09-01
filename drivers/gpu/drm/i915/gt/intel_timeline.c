@@ -229,13 +229,30 @@ static void cacheline_free(struct intel_timeline_cacheline *cl)
 	i915_active_release(&cl->active);
 }
 
+I915_SELFTEST_EXPORT int
+intel_timeline_pin_map(struct intel_timeline *timeline)
+{
+	if (!timeline->hwsp_cacheline) {
+		struct drm_i915_gem_object *obj = timeline->hwsp_ggtt->obj;
+		u32 ofs = offset_in_page(timeline->hwsp_offset);
+		void *vaddr;
+
+		vaddr = i915_gem_object_pin_map(obj, I915_MAP_WB);
+		if (IS_ERR(vaddr))
+			return PTR_ERR(vaddr);
+
+		timeline->hwsp_map = vaddr;
+		timeline->hwsp_seqno = memset(vaddr + ofs, 0, CACHELINE_BYTES);
+	}
+
+	return 0;
+}
+
 static int intel_timeline_init(struct intel_timeline *timeline,
 			       struct intel_gt *gt,
 			       struct i915_vma *hwsp,
 			       unsigned int offset)
 {
-	void *vaddr;
-
 	kref_init(&timeline->kref);
 	atomic_set(&timeline->pin_count, 0);
 
@@ -260,17 +277,14 @@ static int intel_timeline_init(struct intel_timeline *timeline,
 
 		timeline->hwsp_cacheline = cl;
 		timeline->hwsp_offset = cacheline * CACHELINE_BYTES;
-
-		vaddr = page_mask_bits(cl->vaddr);
+		timeline->hwsp_map = page_mask_bits(cl->vaddr);
+		timeline->hwsp_seqno =
+			memset(timeline->hwsp_map + timeline->hwsp_offset, 0,
+			       CACHELINE_BYTES);
 	} else {
 		timeline->hwsp_offset = offset;
-		vaddr = i915_gem_object_pin_map(hwsp->obj, I915_MAP_WB);
-		if (IS_ERR(vaddr))
-			return PTR_ERR(vaddr);
+		timeline->hwsp_map = NULL;
 	}
-
-	timeline->hwsp_seqno =
-		memset(vaddr + timeline->hwsp_offset, 0, CACHELINE_BYTES);
 
 	timeline->hwsp_ggtt = i915_vma_get(hwsp);
 	GEM_BUG_ON(timeline->hwsp_offset >= hwsp->size);
@@ -306,7 +320,7 @@ static void intel_timeline_fini(struct intel_timeline *timeline)
 
 	if (timeline->hwsp_cacheline)
 		cacheline_free(timeline->hwsp_cacheline);
-	else
+	else if (timeline->hwsp_map)
 		i915_gem_object_unpin_map(timeline->hwsp_ggtt->obj);
 
 	i915_vma_put(timeline->hwsp_ggtt);
@@ -346,9 +360,18 @@ int intel_timeline_pin(struct intel_timeline *tl, struct i915_gem_ww_ctx *ww)
 	if (atomic_add_unless(&tl->pin_count, 1, 0))
 		return 0;
 
+	if (!tl->hwsp_cacheline) {
+		err = intel_timeline_pin_map(tl);
+		if (err)
+			return err;
+	}
+
 	err = i915_ggtt_pin(tl->hwsp_ggtt, ww, 0, PIN_HIGH);
-	if (err)
+	if (err) {
+		if (!tl->hwsp_cacheline)
+			i915_gem_object_unpin_map(tl->hwsp_ggtt->obj);
 		return err;
+	}
 
 	tl->hwsp_offset =
 		i915_ggtt_offset(tl->hwsp_ggtt) +
@@ -360,6 +383,8 @@ int intel_timeline_pin(struct intel_timeline *tl, struct i915_gem_ww_ctx *ww)
 	if (atomic_fetch_inc(&tl->pin_count)) {
 		cacheline_release(tl->hwsp_cacheline);
 		__i915_vma_unpin(tl->hwsp_ggtt);
+		if (!tl->hwsp_cacheline)
+			i915_gem_object_unpin_map(tl->hwsp_ggtt->obj);
 	}
 
 	return 0;
