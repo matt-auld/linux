@@ -36,4 +36,14 @@ int i915_gem_object_copy_blt(struct drm_i915_gem_object *src,
 			     struct drm_i915_gem_object *dst,
 			     struct intel_context *ce);
 
+int i915_gem_object_ww_fill_blt(struct drm_i915_gem_object *obj,
+				struct i915_gem_ww_ctx *ww,
+				struct intel_context *ce,
+				u32 value);
+
+int i915_gem_object_ww_copy_blt(struct drm_i915_gem_object *src,
+				struct drm_i915_gem_object *dst,
+				struct i915_gem_ww_ctx *ww,
+				struct intel_context *ce);
+
 #endif

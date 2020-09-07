@@ -145,11 +145,11 @@ move_obj_to_gpu(struct drm_i915_gem_object *obj,
 	return i915_request_await_object(rq, obj, write);
 }
 
-int i915_gem_object_fill_blt(struct drm_i915_gem_object *obj,
-			     struct intel_context *ce,
-			     u32 value)
+int i915_gem_object_ww_fill_blt(struct drm_i915_gem_object *obj,
+				struct i915_gem_ww_ctx *ww,
+				struct intel_context *ce,
+				u32 value)
 {
-	struct i915_gem_ww_ctx ww;
 	struct i915_request *rq;
 	struct i915_vma *batch;
 	struct i915_vma *vma;
@@ -159,22 +159,16 @@ int i915_gem_object_fill_blt(struct drm_i915_gem_object *obj,
 	if (IS_ERR(vma))
 		return PTR_ERR(vma);
 
-	i915_gem_ww_ctx_init(&ww, true);
 	intel_engine_pm_get(ce->engine);
-retry:
-	err = i915_gem_object_lock(obj, &ww);
+	err = intel_context_pin_ww(ce, ww);
 	if (err)
 		goto out;
 
-	err = intel_context_pin_ww(ce, &ww);
-	if (err)
-		goto out;
-
-	err = i915_vma_pin_ww(vma, &ww, 0, 0, PIN_USER);
+	err = i915_vma_pin_ww(vma, ww, 0, 0, PIN_USER);
 	if (err)
 		goto out_ctx;
 
-	batch = intel_emit_vma_fill_blt(ce, vma, &ww, value);
+	batch = intel_emit_vma_fill_blt(ce, vma, ww, value);
 	if (IS_ERR(batch)) {
 		err = PTR_ERR(batch);
 		goto out_vma;
@@ -210,21 +204,42 @@ out_request:
 
 	i915_request_add(rq);
 out_batch:
+	i915_gem_ww_unlock_single(batch->obj);
 	intel_emit_vma_release(ce, batch);
 out_vma:
 	i915_vma_unpin(vma);
 out_ctx:
 	intel_context_unpin(ce);
 out:
+	intel_engine_pm_put(ce->engine);
+	return err;
+}
+
+int i915_gem_object_fill_blt(struct drm_i915_gem_object *obj,
+				struct intel_context *ce,
+				u32 value)
+{
+	struct i915_gem_ww_ctx ww;
+	int err;
+
+	i915_gem_ww_ctx_init(&ww, true);
+retry:
+	err = i915_gem_object_lock(obj, &ww);
+	if (err)
+		goto out_err;
+
+	err = i915_gem_object_ww_fill_blt(obj, &ww, ce, value);
+out_err:
 	if (err == -EDEADLK) {
 		err = i915_gem_ww_ctx_backoff(&ww);
 		if (!err)
 			goto retry;
 	}
 	i915_gem_ww_ctx_fini(&ww);
-	intel_engine_pm_put(ce->engine);
+
 	return err;
 }
+
 
 /* Wa_1209644611:icl,ehl */
 static bool wa_1209644611_applies(struct drm_i915_private *i915, u32 size)
@@ -354,13 +369,13 @@ out_pm:
 	return ERR_PTR(err);
 }
 
-int i915_gem_object_copy_blt(struct drm_i915_gem_object *src,
-			     struct drm_i915_gem_object *dst,
-			     struct intel_context *ce)
+int i915_gem_object_ww_copy_blt(struct drm_i915_gem_object *src,
+				struct drm_i915_gem_object *dst,
+				struct i915_gem_ww_ctx *ww,
+				struct intel_context *ce)
 {
 	struct i915_address_space *vm = ce->vm;
 	struct i915_vma *vma[2], *batch;
-	struct i915_gem_ww_ctx ww;
 	struct i915_request *rq;
 	int err, i;
 
@@ -372,26 +387,20 @@ int i915_gem_object_copy_blt(struct drm_i915_gem_object *src,
 	if (IS_ERR(vma[1]))
 		return PTR_ERR(vma[1]);
 
-	i915_gem_ww_ctx_init(&ww, true);
 	intel_engine_pm_get(ce->engine);
-retry:
-	err = i915_gem_object_lock(src, &ww);
-	if (!err)
-		err = i915_gem_object_lock(dst, &ww);
-	if (!err)
-		err = intel_context_pin_ww(ce, &ww);
+	err = intel_context_pin_ww(ce, ww);
 	if (err)
 		goto out;
 
-	err = i915_vma_pin_ww(vma[0], &ww, 0, 0, PIN_USER);
+	err = i915_vma_pin_ww(vma[0], ww, 0, 0, PIN_USER);
 	if (err)
 		goto out_ctx;
 
-	err = i915_vma_pin_ww(vma[1], &ww, 0, 0, PIN_USER);
+	err = i915_vma_pin_ww(vma[1], ww, 0, 0, PIN_USER);
 	if (unlikely(err))
 		goto out_unpin_src;
 
-	batch = intel_emit_vma_copy_blt(ce, &ww, vma[0], vma[1]);
+	batch = intel_emit_vma_copy_blt(ce, ww, vma[0], vma[1]);
 	if (IS_ERR(batch)) {
 		err = PTR_ERR(batch);
 		goto out_unpin_dst;
@@ -437,6 +446,7 @@ out_request:
 
 	i915_request_add(rq);
 out_batch:
+	i915_gem_ww_unlock_single(batch->obj);
 	intel_emit_vma_release(ce, batch);
 out_unpin_dst:
 	i915_vma_unpin(vma[1]);
@@ -445,13 +455,36 @@ out_unpin_src:
 out_ctx:
 	intel_context_unpin(ce);
 out:
+	intel_engine_pm_put(ce->engine);
+	return err;
+}
+
+int i915_gem_object_copy_blt(struct drm_i915_gem_object *src,
+			     struct drm_i915_gem_object *dst,
+			     struct intel_context *ce)
+{
+	struct i915_gem_ww_ctx ww;
+	int err;
+
+	i915_gem_ww_ctx_init(&ww, true);
+retry:
+	err = i915_gem_object_lock(src, &ww);
+	if (err)
+		goto out_err;
+
+	err = i915_gem_object_lock(dst, &ww);
+	if (err)
+		goto out_err;
+
+	err = i915_gem_object_ww_copy_blt(src, dst, &ww, ce);
+out_err:
 	if (err == -EDEADLK) {
 		err = i915_gem_ww_ctx_backoff(&ww);
 		if (!err)
 			goto retry;
 	}
 	i915_gem_ww_ctx_fini(&ww);
-	intel_engine_pm_put(ce->engine);
+
 	return err;
 }
 
