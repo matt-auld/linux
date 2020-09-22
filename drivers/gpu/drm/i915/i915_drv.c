@@ -68,6 +68,7 @@
 #include "gt/intel_gt.h"
 #include "gt/intel_gt_pm.h"
 #include "gt/intel_rc6.h"
+#include "gt/intel_gt_requests.h"
 
 #include "i915_debugfs.h"
 #include "i915_drv.h"
@@ -1088,9 +1089,35 @@ static bool suspend_to_idle(struct drm_i915_private *dev_priv)
 	return false;
 }
 
+static int i915_gem_suspend_ppgtt_mappings(struct drm_i915_private *i915);
+
+static int intel_dmem_evict_buffers(struct drm_device *dev, bool in_suspend,
+				    bool perma_pin);
+
 static int i915_drm_prepare(struct drm_device *dev)
 {
 	struct drm_i915_private *i915 = to_i915(dev);
+
+	if (HAS_LMEM(i915))     {
+		struct intel_gt *gt= &i915->gt;
+		long timeout = I915_GEM_IDLE_TIMEOUT;
+		int ret;
+
+		if (intel_gt_wait_for_idle(gt, timeout) == -ETIME) {
+			intel_gt_set_wedged(gt);
+			intel_gt_retire_requests(gt);
+		}
+
+		ret = intel_dmem_evict_buffers(dev, true, false);
+		if (ret)
+			return ret;
+
+		i915_teardown_blt_windows(i915);
+
+		ret = i915_gem_suspend_ppgtt_mappings(i915);
+		if (ret)
+			return ret;
+	}
 
 	/*
 	 * NB intel_display_suspend() may issue new requests after we've
@@ -1274,7 +1301,6 @@ static int i915_drm_suspend(struct drm_device *dev)
 	struct drm_i915_private *dev_priv = to_i915(dev);
 	struct pci_dev *pdev = dev_priv->drm.pdev;
 	pci_power_t opregion_target_state;
-	int ret = 0;
 
 	disable_rpm_wakeref_asserts(&dev_priv->runtime_pm);
 
@@ -1289,18 +1315,6 @@ static int i915_drm_suspend(struct drm_device *dev)
 	intel_display_suspend(dev);
 
 	intel_dp_mst_suspend(dev_priv);
-
-	if (HAS_LMEM(dev_priv))	{
-		ret = intel_dmem_evict_buffers(dev, true, false);
-		if (ret)
-			return ret;
-
-		i915_teardown_blt_windows(dev_priv);
-
-		ret = i915_gem_suspend_ppgtt_mappings(dev_priv);
-		if (ret)
-			return ret;
-	}
 
 	intel_runtime_pm_disable_interrupts(dev_priv);
 	intel_hpd_cancel_work(dev_priv);
