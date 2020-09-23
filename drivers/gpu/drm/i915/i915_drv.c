@@ -1099,7 +1099,7 @@ static int i915_drm_prepare(struct drm_device *dev)
 	struct drm_i915_private *i915 = to_i915(dev);
 
 	if (HAS_LMEM(i915))     {
-		struct intel_gt *gt= &i915->gt;
+		struct intel_gt *gt = &i915->gt;
 		long timeout = I915_GEM_IDLE_TIMEOUT;
 		int ret;
 
@@ -1182,7 +1182,8 @@ static int intel_dmem_evict_buffers(struct drm_device *dev, bool in_suspend,
 	struct drm_i915_private *i915 = to_i915(dev);
 	struct drm_i915_gem_object *obj;
 	struct intel_memory_region *mem;
-	int id, ret = 0;
+	struct i915_gem_ww_ctx ww;
+	int id, ret = 0, err = 0;
 
 	for_each_memory_region(mem, i915, id) {
 		struct list_head still_in_list;
@@ -1204,19 +1205,20 @@ static int intel_dmem_evict_buffers(struct drm_device *dev, bool in_suspend,
 
 				mutex_unlock(&mem->objects.lock);
 
+				i915_gem_ww_ctx_init (&ww, true);
+retry:
+				err = i915_gem_object_lock(obj, &ww);
+				if (err)
+					goto out_err;
+
 				if (in_suspend) {
 					obj->swapto = NULL;
 					obj->evicted = false;
 
 					ret = i915_gem_object_unbind(obj, 0);
 					if (ret || i915_gem_object_has_pinned_pages(obj)) {
-						if (!i915_gem_object_trylock(obj)) {
-							ret = -EBUSY;
-							goto next;
-						}
 						ret = i915_gem_perma_pinned_object_swapout(obj);
-						i915_gem_object_unlock(obj);
-						goto next;
+						goto out_err;
 					}
 
 					obj->do_swapping = true;
@@ -1228,13 +1230,7 @@ static int intel_dmem_evict_buffers(struct drm_device *dev, bool in_suspend,
 						obj->evicted = true;
 				} else {
 					if (i915_gem_object_has_pinned_pages(obj) && perma_pin) {
-						if (!i915_gem_object_trylock(obj)) {
-							ret = -EBUSY;
-							goto next;
-						}
 						ret = i915_gem_perma_pinned_object_swapin(obj);
-						/* FIXME: Where is this error message taken care of? */
-						i915_gem_object_unlock(obj);
 					}
 
 					if (obj->swapto && obj->evicted && !perma_pin) {
@@ -1247,7 +1243,14 @@ static int intel_dmem_evict_buffers(struct drm_device *dev, bool in_suspend,
 						}
 					}
 				}
-next:
+out_err:
+				if (err ==  -EDEADLK) {
+					err = i915_gem_ww_ctx_backoff(&ww);
+					if (!err)
+						goto retry;
+				}
+				i915_gem_ww_ctx_fini(&ww);
+
 				mutex_lock(&mem->objects.lock);
 				if (ret)
 					break;
