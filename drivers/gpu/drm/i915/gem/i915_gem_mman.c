@@ -238,6 +238,7 @@ static vm_fault_t vm_fault_cpu(struct vm_fault *vmf)
 	struct vm_area_struct *area = vmf->vma;
 	struct i915_mmap_offset *mmo = area->vm_private_data;
 	struct drm_i915_gem_object *obj = mmo->obj;
+	struct i915_gem_ww_ctx ww;
 	resource_size_t iomap;
 	int err;
 
@@ -246,33 +247,35 @@ static vm_fault_t vm_fault_cpu(struct vm_fault *vmf)
 		     area->vm_flags & VM_WRITE))
 		return VM_FAULT_SIGBUS;
 
-	if (i915_gem_object_lock_interruptible(obj, NULL))
-		return VM_FAULT_NOPAGE;
+	for_i915_gem_ww(&ww, err, true) {
+		err = i915_gem_object_lock(obj, &ww);
+		if (err)
+			continue;
 
-	err = i915_gem_object_pin_pages(obj);
-	if (err)
-		goto out;
+		err = i915_gem_object_pin_pages(obj);
+		if (err)
+			continue;
 
-	iomap = -1;
-	if (!i915_gem_object_has_struct_page(obj)) {
-		iomap = obj->mm.region->iomap.base;
-		iomap -= obj->mm.region->region.start;
+		iomap = -1;
+		if (!i915_gem_object_has_struct_page(obj)) {
+			iomap = obj->mm.region->iomap.base;
+			iomap -= obj->mm.region->region.start;
+		}
+
+		/* PTEs are revoked in obj->ops->put_pages() */
+		err = remap_io_sg(area,
+				  area->vm_start, area->vm_end - area->vm_start,
+				  obj->mm.pages->sgl, iomap);
+
+		if (area->vm_flags & VM_WRITE) {
+			GEM_BUG_ON(!i915_gem_object_has_pinned_pages(obj));
+			obj->mm.dirty = true;
+		}
+
+		i915_gem_object_unpin_pages(obj);
+		/* Implicit unlock */
 	}
 
-	/* PTEs are revoked in obj->ops->put_pages() */
-	err = remap_io_sg(area,
-			  area->vm_start, area->vm_end - area->vm_start,
-			  obj->mm.pages->sgl, iomap);
-
-	if (area->vm_flags & VM_WRITE) {
-		GEM_BUG_ON(!i915_gem_object_has_pinned_pages(obj));
-		obj->mm.dirty = true;
-	}
-
-	i915_gem_object_unpin_pages(obj);
-
-out:
-	i915_gem_object_unlock(obj);
 	return i915_error_to_vmf_fault(err);
 }
 
