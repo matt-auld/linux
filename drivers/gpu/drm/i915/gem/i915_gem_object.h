@@ -107,6 +107,13 @@ i915_gem_object_put(struct drm_i915_gem_object *obj)
 
 #define assert_object_held(obj) dma_resv_assert_held((obj)->base.resv)
 
+#define object_is_isolated(obj)					\
+	(!IS_ENABLED(CONFIG_LOCKDEP) ||				\
+	 ((kref_read(&obj->base.refcount) == 0) ||		\
+	  ((kref_read(&obj->base.refcount) == 1) &&		\
+	   list_empty_careful(&obj->mm.link) &&			\
+	   list_empty_careful(&obj->vma.list))))
+
 static inline int __i915_gem_object_lock(struct drm_i915_gem_object *obj,
 					 struct i915_gem_ww_ctx *ww,
 					 bool intr)
@@ -145,6 +152,15 @@ static inline int i915_gem_object_lock_interruptible(struct drm_i915_gem_object 
 static inline bool i915_gem_object_trylock(struct drm_i915_gem_object *obj)
 {
 	return dma_resv_trylock(obj->base.resv);
+}
+
+static inline void i915_gem_object_lock_isolated(struct drm_i915_gem_object *obj)
+{
+	int ret;
+
+	WARN_ON(!object_is_isolated(obj));
+	ret = dma_resv_trylock(obj->base.resv);
+	GEM_WARN_ON(!ret);
 }
 
 static inline void i915_gem_object_unlock(struct drm_i915_gem_object *obj)
