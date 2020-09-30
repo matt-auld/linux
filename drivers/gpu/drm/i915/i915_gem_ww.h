@@ -10,15 +10,18 @@
 struct i915_gem_ww_ctx {
 	struct ww_acquire_ctx ctx;
 	struct list_head obj_list;
+	struct list_head eviction_list;
 	struct drm_i915_gem_object *contended;
 	unsigned short intr;
 	unsigned short loop;
+	unsigned short contended_evict;
 };
 
 void i915_gem_ww_ctx_init(struct i915_gem_ww_ctx *ctx, bool intr);
 void i915_gem_ww_ctx_fini(struct i915_gem_ww_ctx *ctx);
 int __must_check i915_gem_ww_ctx_backoff(struct i915_gem_ww_ctx *ctx);
 void i915_gem_ww_unlock_single(struct drm_i915_gem_object *obj);
+void i915_gem_ww_ctx_unlock_evictions(struct i915_gem_ww_ctx *ww);
 
 /* Internal functions used by the inlines! Don't use. */
 static inline int __i915_gem_ww_fini(struct i915_gem_ww_ctx *ww, int err)

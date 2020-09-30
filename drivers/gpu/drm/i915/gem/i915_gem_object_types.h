@@ -142,6 +142,11 @@ struct drm_i915_gem_object {
 	 */
 	struct list_head obj_link;
 
+	/**
+	 * @evict_locked: Whether @obj_link sits on the eviction_list
+	 */
+	bool evict_locked;
+
 	/** Stolen memory for this object, instead of being backed by shmem. */
 	struct drm_mm_node *stolen;
 	union {

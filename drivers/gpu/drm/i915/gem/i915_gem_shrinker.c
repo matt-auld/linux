@@ -100,6 +100,7 @@ i915_gem_shrink(struct i915_gem_ww_ctx *ww,
 		unsigned long *nr_scanned,
 		unsigned int shrink)
 {
+	struct drm_i915_gem_object *obj;
 	const struct {
 		struct list_head *list;
 		unsigned int bit;
@@ -164,7 +165,6 @@ i915_gem_shrink(struct i915_gem_ww_ctx *ww,
 	 */
 	for (phase = phases; phase->list; phase++) {
 		struct list_head still_in_list;
-		struct drm_i915_gem_object *obj;
 		unsigned long flags;
 
 		if ((shrink & phase->bit) == 0)
@@ -197,6 +197,10 @@ i915_gem_shrink(struct i915_gem_ww_ctx *ww,
 			if (!can_release_pages(obj))
 				continue;
 
+			/* Already locked this object? */
+			if (ww && ww == i915_gem_get_locking_ctx(obj))
+				continue;
+
 			if (!kref_get_unless_zero(&obj->base.refcount))
 				continue;
 
@@ -209,7 +213,11 @@ i915_gem_shrink(struct i915_gem_ww_ctx *ww,
 					if (!i915_gem_object_trylock(obj))
 						goto skip;
 				} else {
-					err = i915_gem_object_lock(obj, ww);
+					err = i915_gem_object_lock_to_evict(obj, ww);
+					if (err == -EALREADY) {
+						err = 0;
+						goto skip;
+					}
 					if (err)
 						goto skip;
 				}
@@ -235,6 +243,8 @@ skip:
 		if (err)
 			return err;
 	}
+	if (ww)
+		i915_gem_ww_ctx_unlock_evictions(ww);
 
 	if (shrink & I915_SHRINK_BOUND)
 		intel_runtime_pm_put(&i915->runtime_pm, wakeref);

@@ -10,24 +10,45 @@ void i915_gem_ww_ctx_init(struct i915_gem_ww_ctx *ww, bool intr)
 {
 	ww_acquire_init(&ww->ctx, &reservation_ww_class);
 	INIT_LIST_HEAD(&ww->obj_list);
+	INIT_LIST_HEAD(&ww->eviction_list);
 	ww->intr = intr;
 	ww->contended = NULL;
+	ww->contended_evict = false;
+}
+
+void i915_gem_ww_ctx_unlock_evictions(struct i915_gem_ww_ctx *ww)
+{
+	struct drm_i915_gem_object *obj, *next;
+
+	list_for_each_entry_safe(obj, next, &ww->eviction_list, obj_link) {
+		list_del(&obj->obj_link);
+		GEM_WARN_ON(!obj->evict_locked);
+		i915_gem_object_unlock(obj);
+		i915_gem_object_put(obj);
+	}
 }
 
 static void i915_gem_ww_ctx_unlock_all(struct i915_gem_ww_ctx *ww)
 {
-	struct drm_i915_gem_object *obj;
+	struct drm_i915_gem_object *obj, *next;
 
-	while ((obj = list_first_entry_or_null(&ww->obj_list, struct drm_i915_gem_object, obj_link))) {
+	list_for_each_entry_safe(obj, next, &ww->obj_list, obj_link) {
 		list_del(&obj->obj_link);
+		GEM_WARN_ON(obj->evict_locked);
 		i915_gem_object_unlock(obj);
 	}
+
+	i915_gem_ww_ctx_unlock_evictions(ww);
 }
 
 void i915_gem_ww_unlock_single(struct drm_i915_gem_object *obj)
 {
+	bool evict_locked = obj->evict_locked;
+
 	list_del(&obj->obj_link);
 	i915_gem_object_unlock(obj);
+	if (evict_locked)
+		i915_gem_object_put(obj);
 }
 
 void i915_gem_ww_ctx_fini(struct i915_gem_ww_ctx *ww)
@@ -39,27 +60,33 @@ void i915_gem_ww_ctx_fini(struct i915_gem_ww_ctx *ww)
 
 int __must_check i915_gem_ww_ctx_backoff(struct i915_gem_ww_ctx *ww)
 {
+	struct drm_i915_gem_object *obj = ww->contended;
 	int ret = 0;
 
-	if (WARN_ON(!ww->contended))
+	if (WARN_ON(!obj))
 		return -EINVAL;
 
 	i915_gem_ww_ctx_unlock_all(ww);
 	if (ww->intr)
-		ret = dma_resv_lock_slow_interruptible(ww->contended->base.resv, &ww->ctx);
+		ret = dma_resv_lock_slow_interruptible(obj->base.resv, &ww->ctx);
 	else
-		dma_resv_lock_slow(ww->contended->base.resv, &ww->ctx);
+		dma_resv_lock_slow(obj->base.resv, &ww->ctx);
+	if (ret)
+		goto out;
 
 	/*
-	 * Unlocking the contended lock again, as might not need it in
-	 * the retried transaction. This does not increase starvation,
-	 * but it's opening up for a wakeup flood if there are many
-	 * transactions relaxing on this object.
+	 * Unlocking the contended lock again, if it was locked for eviction.
+	 * We will most likely not need it in the retried transaction.
 	 */
-	if (!ret)
-		dma_resv_unlock(ww->contended->base.resv);
+	if (ww->contended_evict) {
+		dma_resv_unlock(obj->base.resv);
+	} else {
+		obj->evict_locked = false;
+		list_add_tail(&obj->obj_link, &ww->obj_list);
+	}
 
-	i915_gem_object_put(ww->contended);
+out:
+	i915_gem_object_put(obj);
 	ww->contended = NULL;
 
 	return ret;
