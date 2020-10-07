@@ -9,6 +9,7 @@
 #include <linux/dma-resv.h>
 
 #include "i915_drv.h"
+#include "i915_gem_lmem.h"
 #include "i915_gem_object.h"
 #include "i915_scatterlist.h"
 
@@ -24,6 +25,11 @@ static struct sg_table *i915_gem_map_dma_buf(struct dma_buf_attachment *attachme
 	struct sg_table *st;
 	struct scatterlist *src, *dst;
 	int ret, i;
+
+	if (i915_gem_object_is_lmem(obj)) {
+		ret = -ENOTSUPP;
+		goto err;
+	}
 
 	ret = i915_gem_object_pin_pages(obj);
 	if (ret)
@@ -248,6 +254,10 @@ struct drm_gem_object *i915_gem_prime_import(struct drm_device *dev,
 			 */
 			return &i915_gem_object_get(obj)->base;
 		}
+
+		/* not our device, but still a i915 object? */
+		if (i915_gem_object_is_lmem(obj))
+			return ERR_PTR(-ENOTSUPP);
 	}
 
 	/* need to attach */
