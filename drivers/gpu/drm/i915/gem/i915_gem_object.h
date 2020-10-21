@@ -117,7 +117,14 @@ i915_gem_object_put(struct drm_i915_gem_object *obj)
 	__drm_gem_object_put(&obj->base);
 }
 
-#define assert_object_held(obj) dma_resv_assert_held((obj)->base.resv)
+#ifdef CONFIG_LOCKDEP
+#define assert_object_held(obj) do {					\
+		dma_resv_assert_held((obj)->base.resv);			\
+		WARN_ON(!ww_mutex_is_locked(&(obj)->base.resv->lock)); \
+	} while (0)
+#else
+#define assert_object_held(obj) do { } while (0)
+#endif
 
 #define object_is_isolated(obj)					\
 	(!IS_ENABLED(CONFIG_LOCKDEP) ||				\
