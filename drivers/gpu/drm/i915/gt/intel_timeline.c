@@ -24,25 +24,43 @@ struct intel_timeline_hwsp {
 	struct list_head free_link;
 	struct i915_vma *vma;
 	u64 free_bitmap;
+	void *vaddr;
 };
 
-static struct i915_vma *__hwsp_alloc(struct intel_gt *gt)
+static int __hwsp_alloc(struct intel_gt *gt, struct intel_timeline_hwsp *hwsp)
 {
 	struct drm_i915_private *i915 = gt->i915;
 	struct drm_i915_gem_object *obj;
-	struct i915_vma *vma;
+	int ret;
 
 	obj = i915_gem_object_create_internal(i915, PAGE_SIZE);
 	if (IS_ERR(obj))
-		return ERR_CAST(obj);
+		return PTR_ERR(obj);
 
+	i915_gem_object_lock_isolated(obj);
 	i915_gem_object_set_cache_coherency(obj, I915_CACHE_LLC);
 
-	vma = i915_vma_instance(obj, &gt->ggtt->vm, NULL);
-	if (IS_ERR(vma))
-		i915_gem_object_put(obj);
+	hwsp->vma = i915_vma_instance(obj, &gt->ggtt->vm, NULL);
+	if (IS_ERR(hwsp->vma)) {
+		ret = PTR_ERR(hwsp->vma);
+		goto out_unlock;
+	}
 
-	return vma;
+	/* Pin early so we can call i915_ggtt_pin unlocked. */
+	hwsp->vaddr = i915_gem_object_pin_map(obj, I915_MAP_WB);
+	if (IS_ERR(hwsp->vaddr)) {
+		ret = PTR_ERR(hwsp->vaddr);
+		goto out_unlock;
+	}
+
+	i915_gem_object_unlock(obj);
+	return 0;
+
+out_unlock:
+	i915_gem_object_unlock(obj);
+	i915_gem_object_put(obj);
+
+	return ret;
 }
 
 static struct i915_vma *
@@ -59,7 +77,7 @@ hwsp_alloc(struct intel_timeline *timeline, unsigned int *cacheline)
 	hwsp = list_first_entry_or_null(&gt->hwsp_free_list,
 					typeof(*hwsp), free_link);
 	if (!hwsp) {
-		struct i915_vma *vma;
+		int ret;
 
 		spin_unlock_irq(&gt->hwsp_lock);
 
@@ -67,17 +85,16 @@ hwsp_alloc(struct intel_timeline *timeline, unsigned int *cacheline)
 		if (!hwsp)
 			return ERR_PTR(-ENOMEM);
 
-		vma = __hwsp_alloc(timeline->gt);
-		if (IS_ERR(vma)) {
+		ret = __hwsp_alloc(timeline->gt, hwsp);
+		if (ret) {
 			kfree(hwsp);
-			return vma;
+			return ERR_PTR(ret);
 		}
 
 		GT_TRACE(timeline->gt, "new HWSP allocated\n");
 
-		vma->private = hwsp;
+		hwsp->vma->private = hwsp;
 		hwsp->gt = timeline->gt;
-		hwsp->vma = vma;
 		hwsp->free_bitmap = ~0ull;
 		hwsp->gt_timelines = gt;
 
@@ -113,9 +130,12 @@ static void __idle_hwsp_free(struct intel_timeline_hwsp *hwsp, int cacheline)
 
 	/* And if no one is left using it, give the page back to the system */
 	if (hwsp->free_bitmap == ~0ull) {
-		i915_vma_put(hwsp->vma);
 		list_del(&hwsp->free_link);
+		spin_unlock_irqrestore(&gt->hwsp_lock, flags);
+		i915_gem_object_unpin_map(hwsp->vma->obj);
+		i915_vma_put(hwsp->vma);
 		kfree(hwsp);
+		return;
 	}
 
 	spin_unlock_irqrestore(&gt->hwsp_lock, flags);
@@ -134,7 +154,6 @@ static void __idle_cacheline_free(struct intel_timeline_cacheline *cl)
 {
 	GEM_BUG_ON(!i915_active_is_idle(&cl->active));
 
-	i915_gem_object_unpin_map(cl->hwsp->vma->obj);
 	i915_vma_put(cl->hwsp->vma);
 	__idle_hwsp_free(cl->hwsp, ptr_unmask_bits(cl->vaddr, CACHELINE_BITS));
 
@@ -165,7 +184,6 @@ static struct intel_timeline_cacheline *
 cacheline_alloc(struct intel_timeline_hwsp *hwsp, unsigned int cacheline)
 {
 	struct intel_timeline_cacheline *cl;
-	void *vaddr;
 
 	GEM_BUG_ON(cacheline >= BIT(CACHELINE_BITS));
 
@@ -173,15 +191,9 @@ cacheline_alloc(struct intel_timeline_hwsp *hwsp, unsigned int cacheline)
 	if (!cl)
 		return ERR_PTR(-ENOMEM);
 
-	vaddr = i915_gem_object_pin_map(hwsp->vma->obj, I915_MAP_WB);
-	if (IS_ERR(vaddr)) {
-		kfree(cl);
-		return ERR_CAST(vaddr);
-	}
-
 	i915_vma_get(hwsp->vma);
 	cl->hwsp = hwsp;
-	cl->vaddr = page_pack_bits(vaddr, cacheline);
+	cl->vaddr = page_pack_bits(hwsp->vaddr, cacheline);
 
 	i915_active_init(&cl->active, __cacheline_active, __cacheline_retire);
 

@@ -862,10 +862,15 @@ int i915_vma_pin_ww(struct i915_vma *vma, struct i915_gem_ww_ctx *ww,
 	unsigned int bound;
 	int err;
 
-#ifdef CONFIG_PROVE_LOCKING
-	if (debug_locks && lockdep_is_held(&vma->vm->i915->drm.struct_mutex))
-		WARN_ON(!ww);
-#endif
+	if (IS_ENABLED(CONFIG_PROVE_LOCKING) && debug_locks) {
+		bool pinned_bind_wo_alloc =
+			vma->obj && i915_gem_object_has_pinned_pages(vma->obj) &&
+			!vma->vm->allocate_va_range;
+
+		if (lockdep_is_held(&vma->vm->i915->drm.struct_mutex) &&
+		    !pinned_bind_wo_alloc)
+			WARN_ON(!ww);
+	}
 
 	BUILD_BUG_ON(PIN_GLOBAL != I915_VMA_GLOBAL_BIND);
 	BUILD_BUG_ON(PIN_USER != I915_VMA_LOCAL_BIND);
