@@ -681,6 +681,8 @@ create_region_for_mapping(struct intel_memory_region *mr, u64 size, u32 type,
 		i915_gem_object_put(obj);
 		if (PTR_ERR(addr) == -ENXIO)
 			return ERR_PTR(-ENODEV);
+		if (PTR_ERR(addr) == -ENOMEM) /* WB local-memory */
+			return ERR_PTR(-ENODEV);
 		return addr;
 	}
 
