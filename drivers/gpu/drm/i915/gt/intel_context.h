@@ -25,6 +25,8 @@
 		     ##__VA_ARGS__);					\
 } while (0)
 
+#define SELFTEST_WA_NESTING SINGLE_DEPTH_NESTING
+
 struct i915_gem_ww_ctx;
 
 void intel_context_init(struct intel_context *ce,

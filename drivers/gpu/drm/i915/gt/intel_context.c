@@ -495,7 +495,8 @@ retry:
 	 */
 	lockdep_unpin_lock(&ce->timeline->mutex, rq->cookie);
 	mutex_release(&ce->timeline->mutex.dep_map, _RET_IP_);
-	mutex_acquire(&ce->timeline->mutex.dep_map, SINGLE_DEPTH_NESTING, 0, _RET_IP_);
+	mutex_acquire(&ce->timeline->mutex.dep_map, SELFTEST_WA_NESTING, 0,
+		      _RET_IP_);
 	rq->cookie = lockdep_pin_lock(&ce->timeline->mutex);
 
 	return rq;

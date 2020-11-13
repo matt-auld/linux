@@ -688,7 +688,7 @@ static int live_hwsp_wrap(void *arg)
 
 		tl->seqno = -4u;
 
-		mutex_lock_nested(&tl->mutex, SINGLE_DEPTH_NESTING);
+		mutex_lock_nested(&tl->mutex, SELFTEST_WA_NESTING + 1);
 		err = intel_timeline_get_seqno(tl, rq, &seqno[0]);
 		mutex_unlock(&tl->mutex);
 		if (err) {
@@ -705,7 +705,7 @@ static int live_hwsp_wrap(void *arg)
 		}
 		hwsp_seqno[0] = tl->hwsp_seqno;
 
-		mutex_lock_nested(&tl->mutex, SINGLE_DEPTH_NESTING);
+		mutex_lock_nested(&tl->mutex, SELFTEST_WA_NESTING + 1);
 		err = intel_timeline_get_seqno(tl, rq, &seqno[1]);
 		mutex_unlock(&tl->mutex);
 		if (err) {
@@ -1037,7 +1037,8 @@ static int live_hwsp_read(void *arg)
 				goto out;
 			}
 
-			mutex_lock(&watcher[0].rq->context->timeline->mutex);
+			mutex_lock_nested(&watcher[0].rq->context->timeline->mutex,
+					  SELFTEST_WA_NESTING + 1);
 			err = intel_timeline_read_hwsp(rq, watcher[0].rq, &hwsp);
 			if (err == 0)
 				err = emit_read_hwsp(watcher[0].rq, /* before */
@@ -1050,7 +1051,8 @@ static int live_hwsp_read(void *arg)
 				goto out;
 			}
 
-			mutex_lock(&watcher[1].rq->context->timeline->mutex);
+			mutex_lock_nested(&watcher[1].rq->context->timeline->mutex,
+					  SELFTEST_WA_NESTING + 1);
 			err = intel_timeline_read_hwsp(rq, watcher[1].rq, &hwsp);
 			if (err == 0)
 				err = emit_read_hwsp(watcher[1].rq, /* after */
