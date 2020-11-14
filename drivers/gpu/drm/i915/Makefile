@@ -92,6 +92,7 @@ gt-y += \
 	gt/intel_engine_heartbeat.o \
 	gt/intel_engine_pm.o \
 	gt/intel_engine_user.o \
+	gt/intel_engine_workaround_bb.o \
 	gt/intel_execlists_submission.o \
 	gt/intel_ggtt.o \
 	gt/intel_ggtt_fencing.o \
