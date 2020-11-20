@@ -192,11 +192,6 @@ i915_param_named(enable_gvt, bool, 0400,
 	"Enable support for Intel GVT-g graphics virtualization host support(default:false)");
 #endif
 
-#if IS_ENABLED(CONFIG_DRM_I915_UNSTABLE_FAKE_LMEM)
-i915_param_named_unsafe(fake_lmem_start, ulong, 0400,
-	"Fake LMEM start offset (default: 0)");
-#endif
-
 i915_param_named_unsafe(enable_eviction, uint, 0600,
 	"Enable eviction which does not rely on DMA resv refactoring "
 	"0=disabled, 1=memcpy based only, 2=blt based only, "
