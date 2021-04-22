@@ -7,7 +7,7 @@
 
 #include "intel_region_ttm.h"
 
-static struct ttm_device_funcs i915_ttm_bo_driver;
+extern struct ttm_device_funcs i915_ttm_bo_driver;
 
 /*
  * This code deals with setting up memory managers for TTM
