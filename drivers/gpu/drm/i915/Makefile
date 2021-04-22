@@ -51,6 +51,7 @@ i915-y += i915_drv.o \
 	  intel_memory_region.o \
 	  intel_pch.o \
 	  intel_pm.o \
+	  intel_region_ttm.o \
 	  intel_runtime_pm.o \
 	  intel_sideband.o \
 	  intel_step.o \
@@ -161,7 +162,6 @@ gem-y += \
 i915-y += \
 	  $(gem-y) \
 	  i915_active.o \
-	  i915_buddy.o \
 	  i915_cmd_parser.o \
 	  i915_gem_evict.o \
 	  i915_gem_gtt.o \

@@ -6,6 +6,10 @@
 
 #include "i915_scatterlist.h"
 
+#include <drm/drm_mm.h>
+
+#include <linux/slab.h>
+
 bool i915_sg_trim(struct sg_table *orig_st)
 {
 	struct sg_table new_st;
@@ -32,6 +36,60 @@ bool i915_sg_trim(struct sg_table *orig_st)
 
 	*orig_st = new_st;
 	return true;
+}
+
+struct sg_table *i915_sg_from_mm_node(struct drm_mm_node *node,
+				      u64 region_start)
+{
+	const u64 max_segment = SZ_1G;
+	u64 segment_pages = max_segment >> PAGE_SHIFT;
+	u64 block_size, offset, prev_end;
+	struct sg_table *st;
+	struct scatterlist *sg;
+
+	st = kmalloc(sizeof(*st), GFP_KERNEL);
+	if (!st)
+		return ERR_PTR(-ENOMEM);
+
+	if (sg_alloc_table(st, DIV_ROUND_UP(node->size, segment_pages),
+			   GFP_KERNEL)) {
+		kfree(st);
+		return ERR_PTR(-ENOMEM);
+	}
+
+	sg = st->sgl;
+	st->nents = 0;
+	prev_end = (resource_size_t)-1;
+	block_size = node->size << PAGE_SHIFT;
+	offset = node->start << PAGE_SHIFT;
+
+	while (block_size) {
+		u64 len;
+
+		if (offset != prev_end || sg->length >= max_segment) {
+			if (st->nents)
+				sg = __sg_next(sg);
+
+			sg_dma_address(sg) = region_start + offset;
+			sg_dma_len(sg) = 0;
+			sg->length = 0;
+			st->nents++;
+		}
+
+		len = min(block_size, max_segment - sg->length);
+		sg->length += len;
+		sg_dma_len(sg) += len;
+
+		offset += len;
+		block_size -= len;
+
+		prev_end = offset;
+	}
+
+	sg_mark_end(sg);
+	i915_sg_trim(st);
+
+	return st;
 }
 
 #if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)

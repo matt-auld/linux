@@ -321,6 +321,9 @@ int ttm_range_man_init(struct ttm_device *bdev,
 		       unsigned type, bool use_tt,
 		       unsigned long p_size);
 
+struct ttm_resource_manager *
+ttm_range_man_init_nodev(unsigned long size, bool use_tt);
+
 /**
  * ttm_range_man_fini
  *
@@ -331,5 +334,7 @@ int ttm_range_man_init(struct ttm_device *bdev,
  */
 int ttm_range_man_fini(struct ttm_device *bdev,
 		       unsigned type);
+
+void ttm_range_man_fini_nodev(struct ttm_resource_manager *man);
 
 #endif
