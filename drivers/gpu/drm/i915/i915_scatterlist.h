@@ -14,6 +14,8 @@
 #include "i915_gem.h"
 
 struct drm_mm_node;
+struct i915_buddy_mm;
+struct io_mapping;
 
 /*
  * Optimised SGL iterator for GEM objects
@@ -154,6 +156,14 @@ static inline unsigned int i915_sg_dma_page_sizes(struct scatterlist *sg)
 
 	return page_sizes;
 }
+
+
+void i915_sg_lmem_cpu_clear(struct sg_table *st, struct io_mapping *iomap,
+			    u64 region_start);
+
+struct sg_table *i915_sg_from_buddy_blocks(struct list_head *blocks,
+					   u64 size,
+					   u64 region_start);
 
 struct sg_table *i915_sg_from_mm_node(struct drm_mm_node *node,
 				      u64 region_start);

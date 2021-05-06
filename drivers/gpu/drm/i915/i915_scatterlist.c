@@ -6,9 +6,12 @@
 
 #include "i915_scatterlist.h"
 
+#include "i915_buddy.h"
+
 #include <drm/drm_mm.h>
 
 #include <linux/slab.h>
+#include <linux/io-mapping.h>
 
 bool i915_sg_trim(struct sg_table *orig_st)
 {
@@ -84,6 +87,91 @@ struct sg_table *i915_sg_from_mm_node(struct drm_mm_node *node,
 		block_size -= len;
 
 		prev_end = offset;
+	}
+
+	sg_mark_end(sg);
+	i915_sg_trim(st);
+
+	return st;
+}
+
+void i915_sg_lmem_cpu_clear(struct sg_table *st, struct io_mapping *iomap,
+			    u64 region_start)
+{
+	struct scatterlist *sg;
+	unsigned long i;
+
+	for_each_sg(st->sgl, sg, st->nents, i) {
+		unsigned int length;
+		void __iomem *vaddr;
+		dma_addr_t daddr;
+
+		daddr = sg_dma_address(sg);
+		daddr -= region_start;
+		length = sg_dma_len(sg);
+
+		vaddr = io_mapping_map_wc(iomap, daddr, length);
+		memset64(vaddr, 0, length / sizeof(u64));
+		io_mapping_unmap(vaddr);
+	}
+
+	wmb();
+}
+
+struct sg_table *i915_sg_from_buddy_blocks(struct list_head *blocks,
+					   u64 size,
+					   u64 region_start)
+{
+	const u64 max_segment = i915_sg_segment_size();
+	struct i915_buddy_block *block;
+	struct scatterlist *sg;
+	struct sg_table *st;
+	resource_size_t prev_end;
+
+	GEM_BUG_ON(list_empty(blocks));
+
+	st = kmalloc(sizeof(*st), GFP_KERNEL);
+	if (!st)
+		return ERR_PTR(-ENOMEM);
+
+	if (sg_alloc_table(st, size >> PAGE_SHIFT, GFP_KERNEL)) {
+		kfree(st);
+		return ERR_PTR(-ENOMEM);
+	}
+
+	sg = st->sgl;
+	st->nents = 0;
+	prev_end = (resource_size_t)-1;
+
+	list_for_each_entry(block, blocks, link) {
+		struct i915_buddy_mm *mm = block->private;
+		u64 block_size, offset;
+
+		block_size = min_t(u64, size, i915_buddy_block_size(mm, block));
+		offset = i915_buddy_block_offset(block);
+
+		while (block_size) {
+			u64 len;
+
+			if (offset != prev_end || sg->length >= max_segment) {
+				if (st->nents)
+					sg = __sg_next(sg);
+
+				sg_dma_address(sg) = region_start + offset;
+				sg_dma_len(sg) = 0;
+				sg->length = 0;
+				st->nents++;
+			}
+
+			len = min(block_size, max_segment - sg->length);
+			sg->length += len;
+			sg_dma_len(sg) += len;
+
+			offset += len;
+			block_size -= len;
+
+			prev_end = offset;
+		}
 	}
 
 	sg_mark_end(sg);
