@@ -8,6 +8,7 @@
 
 #include <linux/bitops.h>
 #include <linux/list.h>
+#include <linux/slab.h>
 
 struct i915_buddy_block {
 #define I915_BUDDY_HEADER_OFFSET GENMASK_ULL(63, 12)
@@ -46,6 +47,7 @@ struct i915_buddy_block {
  * i915_buddy_alloc* and i915_buddy_free* should suffice.
  */
 struct i915_buddy_mm {
+	struct kmem_cache *slab_blocks;
 	/* Maintain a free list for each order. */
 	struct list_head *free_list;
 

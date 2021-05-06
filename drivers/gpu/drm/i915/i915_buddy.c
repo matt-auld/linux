@@ -4,45 +4,14 @@
  */
 
 #include <linux/kmemleak.h>
-#include <linux/slab.h>
 
 #include "i915_buddy.h"
 
 #include "i915_gem.h"
-#include "i915_globals.h"
 #include "i915_utils.h"
 
-static struct i915_global_block {
-	struct i915_global base;
-	struct kmem_cache *slab_blocks;
-} global;
-
-static void i915_global_buddy_shrink(void)
-{
-	kmem_cache_shrink(global.slab_blocks);
-}
-
-static void i915_global_buddy_exit(void)
-{
-	kmem_cache_destroy(global.slab_blocks);
-}
-
-static struct i915_global_block global = { {
-	.shrink = i915_global_buddy_shrink,
-	.exit = i915_global_buddy_exit,
-} };
-
-int __init i915_global_buddy_init(void)
-{
-	global.slab_blocks = KMEM_CACHE(i915_buddy_block, SLAB_HWCACHE_ALIGN);
-	if (!global.slab_blocks)
-		return -ENOMEM;
-
-	i915_global_register(&global.base);
-	return 0;
-}
-
-static struct i915_buddy_block *i915_block_alloc(struct i915_buddy_block *parent,
+static struct i915_buddy_block *i915_block_alloc(struct i915_buddy_mm *mm,
+						 struct i915_buddy_block *parent,
 						 unsigned int order,
 						 u64 offset)
 {
@@ -50,7 +19,7 @@ static struct i915_buddy_block *i915_block_alloc(struct i915_buddy_block *parent
 
 	GEM_BUG_ON(order > I915_BUDDY_MAX_ORDER);
 
-	block = kmem_cache_zalloc(global.slab_blocks, GFP_KERNEL);
+	block = kmem_cache_zalloc(mm->slab_blocks, GFP_KERNEL);
 	if (!block)
 		return NULL;
 
@@ -62,9 +31,10 @@ static struct i915_buddy_block *i915_block_alloc(struct i915_buddy_block *parent
 	return block;
 }
 
-static void i915_block_free(struct i915_buddy_block *block)
+static void i915_block_free(struct i915_buddy_mm *mm,
+			    struct i915_buddy_block *block)
 {
-	kmem_cache_free(global.slab_blocks, block);
+	kmem_cache_free(mm->slab_blocks, block);
 }
 
 static void mark_allocated(struct i915_buddy_block *block)
@@ -115,11 +85,15 @@ int i915_buddy_init(struct i915_buddy_mm *mm, u64 size, u64 chunk_size)
 
 	GEM_BUG_ON(mm->max_order > I915_BUDDY_MAX_ORDER);
 
+	mm->slab_blocks = KMEM_CACHE(i915_buddy_block, SLAB_HWCACHE_ALIGN);
+	if (!mm->slab_blocks)
+		return -ENOMEM;
+
 	mm->free_list = kmalloc_array(mm->max_order + 1,
 				      sizeof(struct list_head),
 				      GFP_KERNEL);
 	if (!mm->free_list)
-		return -ENOMEM;
+		goto out_destroy_slab;
 
 	for (i = 0; i <= mm->max_order; ++i)
 		INIT_LIST_HEAD(&mm->free_list[i]);
@@ -147,7 +121,7 @@ int i915_buddy_init(struct i915_buddy_mm *mm, u64 size, u64 chunk_size)
 		root_size = rounddown_pow_of_two(size);
 		order = ilog2(root_size) - ilog2(chunk_size);
 
-		root = i915_block_alloc(NULL, order, offset);
+		root = i915_block_alloc(mm, NULL, order, offset);
 		if (!root)
 			goto out_free_roots;
 
@@ -167,10 +141,12 @@ int i915_buddy_init(struct i915_buddy_mm *mm, u64 size, u64 chunk_size)
 
 out_free_roots:
 	while (i--)
-		i915_block_free(mm->roots[i]);
+		i915_block_free(mm, mm->roots[i]);
 	kfree(mm->roots);
 out_free_list:
 	kfree(mm->free_list);
+out_destroy_slab:
+	kmem_cache_destroy(mm->slab_blocks);
 	return -ENOMEM;
 }
 
@@ -180,11 +156,12 @@ void i915_buddy_fini(struct i915_buddy_mm *mm)
 
 	for (i = 0; i < mm->n_roots; ++i) {
 		GEM_WARN_ON(!i915_buddy_block_is_free(mm->roots[i]));
-		i915_block_free(mm->roots[i]);
+		i915_block_free(mm, mm->roots[i]);
 	}
 
 	kfree(mm->roots);
 	kfree(mm->free_list);
+	kmem_cache_destroy(mm->slab_blocks);
 }
 
 static int split_block(struct i915_buddy_mm *mm,
@@ -196,14 +173,14 @@ static int split_block(struct i915_buddy_mm *mm,
 	GEM_BUG_ON(!i915_buddy_block_is_free(block));
 	GEM_BUG_ON(!i915_buddy_block_order(block));
 
-	block->left = i915_block_alloc(block, block_order, offset);
+	block->left = i915_block_alloc(mm, block, block_order, offset);
 	if (!block->left)
 		return -ENOMEM;
 
-	block->right = i915_block_alloc(block, block_order,
+	block->right = i915_block_alloc(mm, block, block_order,
 					offset + (mm->chunk_size << block_order));
 	if (!block->right) {
-		i915_block_free(block->left);
+		i915_block_free(mm, block->left);
 		return -ENOMEM;
 	}
 
@@ -245,8 +222,8 @@ static void __i915_buddy_free(struct i915_buddy_mm *mm,
 
 		list_del(&buddy->link);
 
-		i915_block_free(block);
-		i915_block_free(buddy);
+		i915_block_free(mm, block);
+		i915_block_free(mm, buddy);
 
 		block = parent;
 	}
