@@ -276,10 +276,6 @@ i915_ttm_resource_get_st(struct drm_i915_gem_object *obj,
 	if (man->use_tt)
 		return i915_ttm_tt_get_st(bo->ttm);
 
-	st = kzalloc(sizeof(*st), GFP_KERNEL);
-	if (!st)
-		return ERR_PTR(-ENOMEM);
-
 	/* Page-based / Buddy manager goes here */
 	st = intel_region_ttm_node_to_st(obj->mm.region, res->mm_node);
 	if (IS_ERR(st))
