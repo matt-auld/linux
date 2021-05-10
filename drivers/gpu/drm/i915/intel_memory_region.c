@@ -5,6 +5,7 @@
 
 #include "intel_memory_region.h"
 #include "i915_drv.h"
+#include "i915_ttm_buddy_manager.h"
 
 static const struct {
 	u16 class;
@@ -26,11 +27,6 @@ static const struct {
 		.class = INTEL_MEMORY_STOLEN_LOCAL,
 		.instance = 0,
 	},
-};
-
-struct intel_region_reserve {
-	struct list_head link;
-	void *node;
 };
 
 struct intel_memory_region *
@@ -63,48 +59,13 @@ intel_memory_region_by_type(struct drm_i915_private *i915,
 	return NULL;
 }
 
-void intel_memory_region_unreserve(struct intel_memory_region *mem)
-{
-	struct intel_region_reserve *reserve, *next;
-
-	if (!mem->priv_ops || !mem->priv_ops->free)
-		return;
-
-	mutex_lock(&mem->mm_lock);
-	list_for_each_entry_safe(reserve, next, &mem->reserved, link) {
-		list_del(&reserve->link);
-		mem->priv_ops->free(mem, reserve->node);
-		kfree(reserve);
-	}
-	mutex_unlock(&mem->mm_lock);
-}
-
 int intel_memory_region_reserve(struct intel_memory_region *mem,
 				resource_size_t offset,
 				resource_size_t size)
 {
-	int ret;
-	struct intel_region_reserve *reserve;
+	struct ttm_resource_manager *man = mem->region_private;
 
-	if (!mem->priv_ops || !mem->priv_ops->reserve)
-		return -EINVAL;
-
-	reserve = kzalloc(sizeof(*reserve), GFP_KERNEL);
-	if (!reserve)
-		return -ENOMEM;
-
-	reserve->node = mem->priv_ops->reserve(mem, offset, size);
-	if (IS_ERR(reserve->node)) {
-		ret = PTR_ERR(reserve->node);
-		kfree(reserve);
-		return ret;
-	}
-		
-	mutex_lock(&mem->mm_lock);
-	list_add_tail(&reserve->link, &mem->reserved);
-	mutex_unlock(&mem->mm_lock);
-
-	return 0;
+	return i915_ttm_buddy_man_reserve_nodev(man, offset, size);
 }
 
 struct intel_memory_region *
@@ -136,9 +97,6 @@ intel_memory_region_create(struct drm_i915_private *i915,
 
 	mutex_init(&mem->objects.lock);
 	INIT_LIST_HEAD(&mem->objects.list);
-	INIT_LIST_HEAD(&mem->reserved);
-
-	mutex_init(&mem->mm_lock);
 
 	if (ops->init) {
 		err = ops->init(mem);
@@ -169,11 +127,9 @@ static void __intel_memory_region_destroy(struct kref *kref)
 	struct intel_memory_region *mem =
 		container_of(kref, typeof(*mem), kref);
 
-	intel_memory_region_unreserve(mem);
 	if (mem->ops->release)
 		mem->ops->release(mem);
 
-	mutex_destroy(&mem->mm_lock);
 	mutex_destroy(&mem->objects.lock);
 	kfree(mem);
 }

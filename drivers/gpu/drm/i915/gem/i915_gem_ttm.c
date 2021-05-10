@@ -135,11 +135,7 @@ static bool i915_ttm_eviction_valuable(struct ttm_buffer_object *bo,
 	struct drm_i915_gem_object *obj = i915_ttm_to_gem(bo);
 
 	/* Will do for now. Our pinned objects are still on TTM's LRU lists */
-	if (!i915_gem_object_evictable(obj))
-		return false;
-
-	/* This isn't valid with a buddy allocator */
-	return ttm_bo_eviction_valuable(bo, place);
+	return i915_gem_object_evictable(obj);
 }
 
 static void i915_ttm_evict_flags(struct ttm_buffer_object *bo,
@@ -276,8 +272,8 @@ i915_ttm_resource_get_st(struct drm_i915_gem_object *obj,
 	if (man->use_tt)
 		return i915_ttm_tt_get_st(bo->ttm);
 
-	/* Page-based / Buddy manager goes here */
-	st = intel_region_ttm_node_to_st(obj->mm.region, res->mm_node);
+	st = i915_sg_from_buddy_blocks(res->mm_node, obj->base.size,
+				       obj->mm.region->region.start);
 	if (IS_ERR(st))
 		return ERR_CAST(st);
 
@@ -524,21 +520,12 @@ int __i915_gem_ttm_object_init(struct intel_memory_region *mem,
 {
 	static struct lock_class_key lock_class;
 	struct drm_i915_private *i915 = mem->i915;
-	size_t alignment = 0;
 	int ret;
-
-	/* Adjust alignment to GPU- and CPU huge page sizes. */
-	if (size >= SZ_1G)
-		alignment = SZ_1G >> PAGE_SHIFT;
-	else if (size >= SZ_2M)
-		alignment = SZ_2M >> PAGE_SHIFT;
-	else if (size >= SZ_64K)
-		alignment = SZ_64K >> PAGE_SHIFT;
 
 	drm_gem_private_object_init(&i915->drm, &obj->base, size);
 	i915_gem_object_init(obj, &i915_gem_ttm_obj_ops, &lock_class, flags);
 	ret = ttm_bo_init(&i915->bdev, i915_gem_to_ttm(obj), size,
-			  ttm_bo_type_kernel, &i915_sys_placement, alignment,
+			  ttm_bo_type_kernel, &i915_sys_placement, PAGE_SIZE,
 			  true, NULL, NULL, i915_ttm_bo_destroy);
 
 	obj->read_domains = I915_GEM_DOMAIN_WC | I915_GEM_DOMAIN_GTT;

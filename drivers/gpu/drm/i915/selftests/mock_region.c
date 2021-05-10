@@ -23,10 +23,11 @@ static int mock_region_get_pages(struct drm_i915_gem_object *obj)
 {
 	unsigned int flags;
 	struct sg_table *pages;
+	int err;
 
 	flags = I915_ALLOC_MIN_PAGE_SIZE;
 	if (obj->flags & I915_BO_ALLOC_CONTIGUOUS)
-		flags |= I915_ALLOC_CONTIGUOUS;
+		flags |= TTM_PL_FLAG_CONTIGUOUS;
 
 	obj->mm.st_mm_node = intel_region_ttm_node_alloc(obj->mm.region,
 							 obj->base.size,
@@ -34,14 +35,21 @@ static int mock_region_get_pages(struct drm_i915_gem_object *obj)
 	if (IS_ERR(obj->mm.st_mm_node))
 		return PTR_ERR(obj->mm.st_mm_node);
 
-	pages = intel_region_ttm_node_to_st(obj->mm.region, obj->mm.st_mm_node);
-	if (IS_ERR(pages))
-		return PTR_ERR(pages);
+	pages = i915_sg_from_buddy_blocks(obj->mm.st_mm_node, obj->base.size,
+					  obj->mm.region->region.start);
+	if (IS_ERR(pages)) {
+		err = PTR_ERR(pages);
+		goto err_free_mm_node;
+	}
 
 	__i915_gem_object_set_pages(obj, pages,
 				    i915_sg_dma_page_sizes(pages->sgl));
 
 	return 0;
+
+err_free_mm_node:
+	intel_region_ttm_node_free(obj->mm.region, obj->mm.st_mm_node);
+	return err;
 }
 
 static const struct drm_i915_gem_object_ops mock_region_obj_ops = {

@@ -4,6 +4,7 @@
 
 #include "i915_drv.h"
 #include "i915_scatterlist.h"
+#include "i915_ttm_buddy_manager.h"
 
 #include "intel_region_ttm.h"
 
@@ -47,69 +48,17 @@ static int intel_region_to_ttm_type(struct intel_memory_region *mem)
 	return type;
 }
 
-static void *intel_region_ttm_node_reserve(struct intel_memory_region *mem,
-					   resource_size_t offset,
-					   resource_size_t size)
-{
-	struct ttm_resource_manager *man = mem->region_private;
-	struct ttm_place place = {};
-	struct ttm_resource res = {};
-	struct ttm_buffer_object mock_bo = {};
-	int ret;
-
-	/*
-	 * Having to use a mock_bo is unfortunate but stems from some
-	 * drivers having private managers that insist to know what the
-	 * allocate memory is intended for, using it to send private
-	 * data to the manager. Also recently the bo has been used to send
-	 * alignment info to the manager. Assume that apart from the latter,
-	 * none of the managers we use will ever access the buffer object
-	 * members, hoping we can pass the alignment info in the
-	 * struct ttm_place in the future.
-	 */
-
-	place.fpfn = offset >> PAGE_SHIFT;
-	place.lpfn = place.fpfn + (size >> PAGE_SHIFT);
-	res.num_pages = size >> PAGE_SHIFT;
-	ret = man->func->alloc(man, &mock_bo, &place, &res);
-	if (ret == -ENOSPC)
-		ret = -ENXIO;
-
-	return ret ? ERR_PTR(ret) : res.mm_node;
-}
-
-void intel_region_ttm_node_free(struct intel_memory_region *mem,
-				void *node)
-{
-	struct ttm_resource_manager *man = mem->region_private;
-	struct ttm_resource res = {};
-
-	res.mm_node = node;
-	man->func->free(man, &res);
-}
-
-static const struct intel_memory_region_private_ops priv_ops = {
-	.reserve = intel_region_ttm_node_reserve,
-	.free = intel_region_ttm_node_free,
-};
-
 int intel_region_ttm_init(struct intel_memory_region *mem)
 {
 	struct ttm_resource_manager *man;
 
-	man = ttm_range_man_init_nodev(resource_size(&mem->region) >>
-				       PAGE_SHIFT, false);
+	man = i915_ttm_buddy_man_init_nodev(resource_size(&mem->region),
+					    PAGE_SIZE, false);
 	if (IS_ERR(man))
 		return PTR_ERR(man);
 
 	ttm_resource_manager_set_used(man, true);
-	mem->chunk_size = PAGE_SIZE;
-	mem->max_order =
-		get_order(rounddown_pow_of_two(resource_size(&mem->region)));
-	mem->is_range_manager = true;
-	mem->priv_ops = &priv_ops;
 	mem->region_private = man;
-	
 
 	/*
 	 * Register only LOCAL memory with the device so that we can
@@ -131,19 +80,13 @@ void intel_region_ttm_fini(struct intel_memory_region *mem)
 	if (mem->type == INTEL_MEMORY_LOCAL) {
 		int ret;
 
-		ret = ttm_range_man_fini(&mem->i915->bdev,
-					 intel_region_to_ttm_type(mem));
+		ret = i915_ttm_buddy_man_fini(&mem->i915->bdev,
+					      intel_region_to_ttm_type(mem));
 		GEM_WARN_ON(ret);
 	} else {
 		ttm_resource_manager_set_used(man, false);
-		ttm_range_man_fini_nodev(man);
+		i915_ttm_buddy_man_fini_nodev(man);
 	}
-}
-
-struct sg_table *intel_region_ttm_node_to_st(struct intel_memory_region *mem,
-					     void *node)
-{
-	return i915_sg_from_mm_node(node, mem->region.start);
 }
 
 void *intel_region_ttm_node_alloc(struct intel_memory_region *mem,
@@ -156,23 +99,22 @@ void *intel_region_ttm_node_alloc(struct intel_memory_region *mem,
 	struct ttm_buffer_object mock_bo = {};
 	int ret;
 
-	/*
-	 * We ignore the flags for now since we're using the range
-	 * manager and contigous and min page size would be fulfilled
-	 * by default if size is min page size aligned.
-	 */
-
 	res.num_pages = size >> PAGE_SHIFT;
-
-	if (size >= SZ_1G)
-		mock_bo.page_alignment = SZ_1G >> PAGE_SHIFT;
-	else if (size >= SZ_2M)
-		mock_bo.page_alignment = SZ_2M >> PAGE_SHIFT;
-	else if (size >= SZ_64K)
-		mock_bo.page_alignment = SZ_64K >> PAGE_SHIFT;
+	mock_bo.page_alignment = PAGE_SIZE;
+	place.flags = flags;
 
 	ret = man->func->alloc(man, &mock_bo, &place, &res);
 	if (ret == -ENOSPC)
 		ret = -ENXIO;
 	return ret ? ERR_PTR(ret) : res.mm_node;
+}
+
+void intel_region_ttm_node_free(struct intel_memory_region *mem,
+				void *node)
+{
+	struct ttm_resource_manager *man = mem->region_private;
+	struct ttm_resource res = {};
+
+	res.mm_node = node;
+	man->func->free(man, &res);
 }
