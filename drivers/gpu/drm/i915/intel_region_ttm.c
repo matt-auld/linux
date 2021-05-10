@@ -100,7 +100,7 @@ void *intel_region_ttm_node_alloc(struct intel_memory_region *mem,
 	int ret;
 
 	res.num_pages = size >> PAGE_SHIFT;
-	mock_bo.page_alignment = PAGE_SIZE;
+	mock_bo.page_alignment = mem->min_page_size;
 	place.flags = flags;
 
 	ret = man->func->alloc(man, &mock_bo, &place, &res);

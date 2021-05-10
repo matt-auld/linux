@@ -525,8 +525,9 @@ int __i915_gem_ttm_object_init(struct intel_memory_region *mem,
 	drm_gem_private_object_init(&i915->drm, &obj->base, size);
 	i915_gem_object_init(obj, &i915_gem_ttm_obj_ops, &lock_class, flags);
 	ret = ttm_bo_init(&i915->bdev, i915_gem_to_ttm(obj), size,
-			  ttm_bo_type_kernel, &i915_sys_placement, PAGE_SIZE,
-			  true, NULL, NULL, i915_ttm_bo_destroy);
+			  ttm_bo_type_kernel, &i915_sys_placement,
+			  mem->min_page_size, true, NULL, NULL,
+			  i915_ttm_bo_destroy);
 
 	obj->read_domains = I915_GEM_DOMAIN_WC | I915_GEM_DOMAIN_GTT;
 
