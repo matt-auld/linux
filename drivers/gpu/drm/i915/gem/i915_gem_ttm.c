@@ -366,6 +366,40 @@ struct ttm_device_funcs i915_ttm_bo_driver = {
 	.delete_mem_notify = i915_ttm_delete_mem_notify,
 };
 
+
+static void i915_gem_object_ttm_placement(struct drm_i915_gem_object *obj)
+{
+	struct ttm_placement *placement = &obj->mm.ttm_placement;
+	struct ttm_place *place = &obj->mm.ttm_place;
+
+	/* TODO: should loop through the mm.placements */
+	if (i915_gem_object_has_struct_page(obj)) {
+		place->fpfn = 0;
+		place->lpfn = 0;
+		place->mem_type = I915_PL_SYSTEM;
+		place->flags = 0;
+	} else if (i915_gem_object_is_stolen(obj)) {
+		place->fpfn = 0;
+		place->lpfn = 0;
+		place->mem_type = I915_PL_STOLEN;
+		place->flags = TTM_PL_FLAG_CONTIGUOUS;
+	} else if (i915_gem_object_is_lmem(obj)) {
+		place->fpfn = 0;
+		place->lpfn = 0;
+		place->mem_type = I915_PL_LMEM0;
+		place->flags = 0;
+		if (obj->flags & I915_BO_ALLOC_CONTIGUOUS)
+			place->flags = TTM_PL_FLAG_CONTIGUOUS;
+	} else {
+		GEM_BUG_ON(1);
+	}
+
+	placement->num_placement = 1;
+	placement->placement = place;
+	placement->num_busy_placement = 1;
+	placement->busy_placement = place;
+}
+
 static int i915_ttm_get_pages(struct drm_i915_gem_object *obj)
 {
 	struct ttm_buffer_object *bo = i915_gem_to_ttm(obj);
@@ -384,7 +418,8 @@ static int i915_ttm_get_pages(struct drm_i915_gem_object *obj)
 	}
 
 	/* Move to the requested placement. */
-	ret = ttm_bo_validate(bo, &i915_lmem0_placement, &ctx);
+	i915_gem_object_ttm_placement(obj);
+	ret = ttm_bo_validate(bo, &obj->mm.ttm_placement, &ctx);
 	if (ret)
 		return ret;
 

@@ -11,6 +11,7 @@
 
 #include <drm/drm_gem.h>
 #include <drm/ttm/ttm_bo_api.h>
+#include <drm/ttm/ttm_placement.h>
 #include <uapi/drm/i915_drm.h>
 
 #include "i915_active.h"
@@ -261,6 +262,9 @@ struct drm_i915_gem_object {
 		 * Memory manager node allocated for this object.
 		 */
 		void *st_mm_node;
+
+		struct ttm_place ttm_place;
+		struct ttm_placement ttm_placement;
 
 		/**
 		 * Element within memory_region->objects or region->purgeable
