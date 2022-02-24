@@ -266,8 +266,7 @@ static const struct i915_refct_sgt_ops tt_rsgt_ops = {
 	.release = i915_ttm_tt_release
 };
 
-static inline bool
-i915_gem_object_needs_ccs_pages(struct drm_i915_gem_object *obj)
+bool i915_gem_object_needs_ccs_pages(struct drm_i915_gem_object *obj)
 {
 	bool lmem_placement = false;
 	int i;
@@ -675,7 +674,7 @@ static void i915_ttm_swap_notify(struct ttm_buffer_object *bo)
 		i915_ttm_purge(obj);
 }
 
-static bool i915_ttm_resource_mappable(struct ttm_resource *res)
+bool i915_ttm_resource_mappable(struct ttm_resource *res)
 {
 	struct i915_ttm_buddy_resource *bman_res = to_ttm_buddy_resource(res);
 
@@ -1054,8 +1053,16 @@ static vm_fault_t vm_fault_ttm(struct vm_fault *vmf)
 	}
 
 	if (drm_dev_enter(dev, &idx)) {
-		ret = ttm_bo_vm_fault_reserved(vmf, vmf->vma->vm_page_prot,
-					       TTM_BO_VM_NUM_PREFAULT);
+		/*
+		 * Ensure we check for any fatal errors if we had to move/clear
+		 * the object. The device should already be wedged if we hit
+		 * such an error.
+		 */
+		if (i915_gem_object_wait_moving_fence(obj, true))
+			ret = VM_FAULT_SIGBUS;
+		else
+			ret = ttm_bo_vm_fault_reserved(vmf, vmf->vma->vm_page_prot,
+						       TTM_BO_VM_NUM_PREFAULT);
 		drm_dev_exit(idx);
 	} else {
 		ret = ttm_bo_vm_dummy_page(vmf, vmf->vma->vm_page_prot);

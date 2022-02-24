@@ -69,6 +69,8 @@ void i915_ttm_adjust_lru(struct drm_i915_gem_object *obj);
 
 int i915_ttm_purge(struct drm_i915_gem_object *obj);
 
+bool i915_gem_object_needs_ccs_pages(struct drm_i915_gem_object *obj);
+
 /**
  * i915_ttm_gtt_binds_lmem - Should the memory be viewed as LMEM by the GTT?
  * @mem: struct ttm_resource representing the memory.
@@ -92,4 +94,7 @@ static inline bool i915_ttm_cpu_maps_iomem(struct ttm_resource *mem)
 	/* Once / if we support GGTT, this is also false for cached ttm_tts */
 	return mem->mem_type != I915_PL_SYSTEM;
 }
+
+bool i915_ttm_resource_mappable(struct ttm_resource *res);
+
 #endif

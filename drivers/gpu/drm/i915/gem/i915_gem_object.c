@@ -783,6 +783,8 @@ int i915_gem_object_wait_moving_fence(struct drm_i915_gem_object *obj,
 				    intr, MAX_SCHEDULE_TIMEOUT);
 	if (!ret)
 		ret = -ETIME;
+	else if (ret > 0 && obj->mm.ttm_unknown_state)
+		ret = -EIO;
 
 	return ret < 0 ? ret : 0;
 }
