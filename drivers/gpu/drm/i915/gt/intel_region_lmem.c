@@ -138,6 +138,11 @@ static struct intel_memory_region *setup_lmem(struct intel_gt *gt)
 	if (!io_size)
 		return ERR_PTR(-EIO);
 
+	if (io_size == lmem_size) {
+		drm_info(&i915->drm, "NOTE!! Forcing small BAR for testing\n");
+		io_size = SZ_256M;
+	}
+
 	min_page_size = HAS_64K_PAGES(i915) ? I915_GTT_PAGE_SIZE_64K :
 						I915_GTT_PAGE_SIZE_4K;
 	mem = intel_memory_region_create(i915,
