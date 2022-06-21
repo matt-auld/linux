@@ -444,6 +444,8 @@ static enum hrtimer_restart watchdog_timer_fn(struct hrtimer *hrtimer)
 		add_taint(TAINT_SOFTLOCKUP, LOCKDEP_STILL_OK);
 		if (softlockup_panic)
 			panic("softlockup: hung tasks");
+		else
+			add_taint(TAINT_WARN, LOCKDEP_STILL_OK);
 
 		printk_prefer_direct_exit();
 	}

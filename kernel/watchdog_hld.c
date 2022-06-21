@@ -156,6 +156,8 @@ static void watchdog_overflow_callback(struct perf_event *event,
 
 		if (hardlockup_panic)
 			nmi_panic(regs, "Hard LOCKUP");
+		else
+			add_taint(TAINT_WARN, LOCKDEP_STILL_OK);
 
 		printk_prefer_direct_exit();
 
