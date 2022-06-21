@@ -1,0 +1,26 @@
+drm drm-fixes a111daf0c53ae91e71fd2bfe7497862d14132e3e
+	Linux 5.19-rc3
+drm-misc drm-misc-fixes be33d52ef5b4bdfec04cfdad39368c343bac97a3
+	drm: panel-orientation-quirks: Add quirk for Aya Neo Next
+drm-intel drm-intel-fixes c7b28f52f406bc89d15ca0ccbc47994f979f2fcd
+	drm/i915/display: Re-add check for low voltage sku for max dp source rate
+drm drm-next 0f95ee9a0c579ebed0309657f6918673927189f2
+	Merge tag 'drm-misc-next-2022-06-08' of git://anongit.freedesktop.org/drm/drm-misc into drm-next
+drm-misc drm-misc-next-fixes 5ee8c8f930ba7d20717c4fc2d9f1ce0e757d1155
+	drm/rockchip: Change register space names in vop2
+drm-intel drm-intel-next-fixes f2906aa863381afb0015a9eb7fefad885d4e5a56
+	Linux 5.19-rc1
+drm-misc drm-misc-next 395d10ae4d29e829847cf40b3b658fd41bf7a729
+	drm/xlnx: Fix build failure due to missing include
+drm-intel drm-intel-next 6434cf630086eea2d091f122f5802582a05d9d1c
+	drm/i915/bios: calculate panel type as per child device index in VBT
+drm-intel drm-intel-gt-next 2ef6efa79fecd5e3457b324155d35524d95f2b6b
+	drm/i915: Improve on suspend / resume time with VT-d enabled
+sound-upstream for-linus 7cf3dead1ad70c72edb03e2d98e1f3dcd332cdb2
+	Linux 5.13
+sound-upstream for-next 7cf3dead1ad70c72edb03e2d98e1f3dcd332cdb2
+	Linux 5.13
+drm-intel topic/core-for-CI f7d7dddaab81eeae4508197b5f38f0b974d97b8c
+	topic/core-for-CI: Add remaining DG2 and ATS-M device IDs
+drm-misc topic/i915-ttm 1e3944578b749449bd7fa6bf0bae4c3d3f5f1733
+	Merge tag 'amd-drm-next-5.16-2021-09-27' of https://gitlab.freedesktop.org/agd5f/linux into drm-next
