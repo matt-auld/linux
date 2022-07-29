@@ -383,7 +383,7 @@ bool i915_request_retire(struct i915_request *rq)
 				  &i915_request_timeline(rq)->requests));
 	if (IS_ENABLED(CONFIG_DRM_I915_DEBUG_GEM))
 		/* Poison before we release our space in the ring */
-		__i915_request_fill(rq, POISON_FREE);
+		__i915_request_fill(rq, POISON_END);
 	rq->ring->head = rq->postfix;
 
 	if (!i915_request_signaled(rq)) {

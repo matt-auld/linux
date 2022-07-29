@@ -619,6 +619,7 @@ eb_add_vma(struct i915_execbuffer *eb,
 			return -EINVAL;
 		}
 
+		GEM_TRACE("is_batch_buffer=yes obj=%p\n", vma->obj);
 		++*current_batch;
 	}
 

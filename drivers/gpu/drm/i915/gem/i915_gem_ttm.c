@@ -144,7 +144,8 @@ i915_ttm_place_from_region(const struct intel_memory_region *mr,
 		place->lpfn = place->fpfn + (size >> PAGE_SHIFT);
 	} else if (mr->io_size && mr->io_size < mr->total) {
 		if (flags & I915_BO_ALLOC_GPU_ONLY) {
-			place->flags |= TTM_PL_FLAG_TOPDOWN;
+			place->fpfn = mr->io_size >> PAGE_SHIFT;
+			place->lpfn = 0;
 		} else {
 			place->fpfn = 0;
 			place->lpfn = mr->io_size >> PAGE_SHIFT;
@@ -1045,6 +1046,10 @@ static vm_fault_t vm_fault_ttm(struct vm_fault *vmf)
 		int err = -ENODEV;
 		int i;
 
+		if (obj->flags & I915_BO_ALLOC_GPU_ONLY)
+			GEM_TRACE("GPU_ONLY migrating obj=%p, n_placements=%d\n", obj,
+				  obj->mm.n_placements);
+
 		for (i = 0; i < obj->mm.n_placements; i++) {
 			struct intel_memory_region *mr = obj->mm.placements[i];
 			unsigned int flags;
@@ -1052,11 +1057,36 @@ static vm_fault_t vm_fault_ttm(struct vm_fault *vmf)
 			if (!mr->io_size && mr->type != INTEL_MEMORY_SYSTEM)
 				continue;
 
+			if (!i915_gem_object_can_migrate(obj, mr->id)) {
+				err = -EBUSY;
+				break;
+			}
+
+			if (!list_empty(&obj->vma.list)) {
+				struct i915_vma *vma;
+
+				spin_lock(&obj->vma.lock);
+				list_for_each_entry(vma, &obj->vma.list, obj_link) {
+					GEM_BUG_ON(vma->obj != obj);
+					GEM_TRACE("obj=%p, gtt=%llu\n", obj,
+						  vma->node.start);
+				}
+				spin_unlock(&obj->vma.lock);
+			}
+
 			flags = obj->flags;
 			flags &= ~I915_BO_ALLOC_GPU_ONLY;
 			err = __i915_ttm_migrate(obj, mr, flags);
-			if (!err)
+			if (!err) {
+				err = i915_gem_object_wait_migration(obj, 0);
+				if (err)
+					GEM_TRACE("GPU_ONLY err obj=%p, n_placements=%d\n", obj,
+						  obj->mm.n_placements);
+				else
+					GEM_TRACE("GPU_ONLY complete obj=%p, n_placements=%d\n", obj,
+						  obj->mm.n_placements);
 				break;
+			}
 		}
 
 		if (err) {

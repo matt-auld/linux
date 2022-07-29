@@ -337,7 +337,7 @@ static void __memcpy_work(struct work_struct *work)
 	 * FIXME: We need to take a closer look here. We should be able to plonk
 	 * this into the fence critical section.
 	 */
-	if (!copy_work->memcpy_allowed) {
+	if (0 && !copy_work->memcpy_allowed) {
 		struct intel_gt *gt;
 		unsigned int id;
 

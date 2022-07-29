@@ -321,15 +321,6 @@ static void __vma_bind(struct dma_fence_work *work)
 	struct i915_vma_work *vw = container_of(work, typeof(*vw), base);
 	struct i915_vma_resource *vma_res = vw->vma_res;
 
-	/*
-	 * We are about the bind the object, which must mean we have already
-	 * signaled the work to potentially clear/move the pages underneath. If
-	 * something went wrong at that stage then the object should have
-	 * unknown_state set, in which case we need to skip the bind.
-	 */
-	if (i915_gem_object_has_unknown_state(vw->obj))
-		return;
-
 	vma_res->ops->bind_vma(vma_res->vm, &vw->stash,
 			       vma_res, vw->cache_level, vw->flags);
 }
