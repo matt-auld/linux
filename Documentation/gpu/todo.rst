@@ -322,18 +322,6 @@ Contact: Daniel Vetter, Noralf Tronnes
 
 Level: Advanced
 
-idr_init_base()
----------------
-
-DRM core&drivers uses a lot of idr (integer lookup directories) for mapping
-userspace IDs to internal objects, and in most places ID=0 means NULL and hence
-is never used. Switching to idr_init_base() for these would make the idr more
-efficient.
-
-Contact: Daniel Vetter
-
-Level: Starter
-
 struct drm_gem_object_funcs
 ---------------------------
 
@@ -616,17 +604,6 @@ A good candidate for the first unit tests are the format-conversion helpers in
 Contact: Javier Martinez Canillas <javierm@redhat.com>
 
 Level: Intermediate
-
-Convert Kernel Selftests (kselftest) to KUnit tests when appropriate
---------------------------------------------------------------------
-
-Many of the `Kselftest <https://www.kernel.org/doc/html/latest/dev-tools/kselftest.html>`_
-tests in DRM could be converted to Kunit tests instead, since that framework
-is more suitable for unit testing.
-
-Contact: Javier Martinez Canillas <javierm@redhat.com>
-
-Level: Starter
 
 Enable trinity for DRM
 ----------------------

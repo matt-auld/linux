@@ -23,7 +23,6 @@
 #include <drm/drm_gem_atomic_helper.h>
 #include <drm/drm_gem_cma_helper.h>
 #include <drm/drm_plane.h>
-#include <drm/drm_plane_helper.h>
 #include <drm/drm_vblank.h>
 
 #include "lcdif_drv.h"
@@ -393,8 +392,8 @@ static int lcdif_plane_atomic_check(struct drm_plane *plane,
 						   &lcdif->crtc);
 
 	return drm_atomic_helper_check_plane_state(plane_state, crtc_state,
-						   DRM_PLANE_HELPER_NO_SCALING,
-						   DRM_PLANE_HELPER_NO_SCALING,
+						   DRM_PLANE_NO_SCALING,
+						   DRM_PLANE_NO_SCALING,
 						   false, true);
 }
 

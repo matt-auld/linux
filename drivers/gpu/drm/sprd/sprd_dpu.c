@@ -23,7 +23,6 @@
 #include <drm/drm_framebuffer.h>
 #include <drm/drm_gem_cma_helper.h>
 #include <drm/drm_gem_framebuffer_helper.h>
-#include <drm/drm_plane_helper.h>
 
 #include "sprd_drm.h"
 #include "sprd_dpu.h"
@@ -524,8 +523,8 @@ static int sprd_plane_atomic_check(struct drm_plane *plane,
 		return PTR_ERR(crtc_state);
 
 	return drm_atomic_helper_check_plane_state(plane_state, crtc_state,
-						  DRM_PLANE_HELPER_NO_SCALING,
-						  DRM_PLANE_HELPER_NO_SCALING,
+						  DRM_PLANE_NO_SCALING,
+						  DRM_PLANE_NO_SCALING,
 						  true, true);
 }
 

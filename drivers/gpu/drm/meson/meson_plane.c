@@ -20,7 +20,6 @@
 #include <drm/drm_framebuffer.h>
 #include <drm/drm_gem_atomic_helper.h>
 #include <drm/drm_gem_cma_helper.h>
-#include <drm/drm_plane_helper.h>
 
 #include "meson_plane.h"
 #include "meson_registers.h"
@@ -95,7 +94,7 @@ static int meson_plane_atomic_check(struct drm_plane *plane,
 	return drm_atomic_helper_check_plane_state(new_plane_state,
 						   crtc_state,
 						   FRAC_16_16(1, 5),
-						   DRM_PLANE_HELPER_NO_SCALING,
+						   DRM_PLANE_NO_SCALING,
 						   false, true);
 }
 
